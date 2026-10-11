@@ -1,0 +1,62 @@
+# Production-shaped single-server stack. Only Caddy publishes ports; Postgres and
+# the API live on a private network. Copy .env.example to .env and fill it in.
+# On arm64 dev machines set POSTGIS_IMAGE=imresamu/postgis:17-3.5-bookworm.
+name: iamhere
+
+services:
+  db:
+    image: ${POSTGIS_IMAGE:-postgis/postgis:17-3.5}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: iamhere
+      POSTGRES_USER: iamhere
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iamhere -d iamhere"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: &logs
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  api:
+    build: ../apps/api
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      IAH_ENV: production
+      IAH_LISTEN: ":8080"
+      IAH_DATABASE_URL: postgres://iamhere:${POSTGRES_PASSWORD}@db:5432/iamhere?sslmode=disable
+      IAH_OIDC_ISSUER: ${IAH_OIDC_ISSUER:?set IAH_OIDC_ISSUER}
+      IAH_OIDC_CLIENT_ID: ${IAH_OIDC_CLIENT_ID:?set IAH_OIDC_CLIENT_ID}
+    networks: [private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    logging: *logs
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [api]
+    ports: ["80:80", "443:443"]
+    environment:
+      IAH_DOMAIN: ${IAH_DOMAIN:?set IAH_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    networks: [private]
+    logging: *logs
+
+networks:
+  private: {}
+
+volumes:
+  pgdata: {}
+  caddy_data: {}

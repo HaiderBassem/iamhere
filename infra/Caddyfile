@@ -1,0 +1,12 @@
+{$IAH_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+	}
+	# flush_interval -1 keeps the live attendance stream unbuffered
+	@api path /v1/* /healthz
+	reverse_proxy @api api:8080 {
+		flush_interval -1
+	}
+}
