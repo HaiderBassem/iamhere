@@ -39,6 +39,7 @@ type Server struct {
 	signups  *limiterSet[string]    // per IP: new accounts
 	mails    *limiterSet[string]    // per IP: anything that sends an email
 	links    *limiterSet[string]    // per IP: following an emailed link (tokens are unguessable)
+	claims   *limiterSet[string]    // per IP: scans held while signing up
 	sseEvery time.Duration
 }
 
@@ -77,6 +78,7 @@ func New(svc *app.Service, log *slog.Logger, ready func(context.Context) error, 
 		signups:  newLimiterSet[string](rate.Every(2*time.Second), 60),
 		mails:    newLimiterSet[string](rate.Every(30*time.Second), 10),
 		links:    newLimiterSet[string](rate.Every(2*time.Second), 30),
+		claims:   newLimiterSet[string](rate.Every(2*time.Second), 60), // a class signing up at once
 		sseEvery: 2 * time.Second,
 	}
 	r := chi.NewRouter()
@@ -104,6 +106,7 @@ func New(svc *app.Service, log *slog.Logger, ready func(context.Context) error, 
 			r.Post("/auth/password/forgot", s.forgotPassword)
 			r.Post("/auth/password/reset", s.resetPassword)
 			r.Post("/auth/email/confirm", s.confirmEmail)
+			r.Post("/checkins/claim", s.claim)
 		})
 
 		r.Group(func(r chi.Router) {
@@ -128,6 +131,7 @@ func New(svc *app.Service, log *slog.Logger, ready func(context.Context) error, 
 				r.Post("/checkins", s.h(s.checkIn))
 				r.Post("/invites/accept", s.h(s.acceptInvite))
 
+				r.Post("/workspace", s.h(s.workspace))
 				r.Get("/orgs", s.h(s.listOrgs))
 				r.Post("/orgs", s.h(s.createOrg))
 				r.Route("/orgs/{org}", func(r chi.Router) {
@@ -150,6 +154,8 @@ func New(svc *app.Service, log *slog.Logger, ready func(context.Context) error, 
 					r.Delete("/venues/{vid}/learned", s.h(s.forgetLearned))
 					r.Get("/references/{rid}/image", s.h(s.referenceImage))
 
+					r.Get("/report", s.h(s.orgReport))
+					r.Get("/report.csv", s.h(s.orgReportCSV))
 					r.Get("/sessions", s.h(s.listSessions))
 					r.Post("/sessions", s.h(s.createSession))
 					r.Get("/sessions/{sid}", s.h(s.getSession))
@@ -596,6 +602,25 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request, u app.User) e
 		return err
 	}
 	writeJSON(w, 201, o)
+	return nil
+}
+
+// workspace is where Start on the home screen puts a session (see app.Workspace).
+func (s *Server) workspace(w http.ResponseWriter, r *http.Request, u app.User) error {
+	if !s.creates.allow(u.ID) {
+		return app.TooMany()
+	}
+	var in struct {
+		Timezone string `json:"timezone"`
+	}
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	o, err := s.svc.Workspace(r.Context(), u, in.Timezone)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, o)
 	return nil
 }
 
@@ -1128,6 +1153,7 @@ func (s *Server) listAttendance(w http.ResponseWriter, r *http.Request, u app.Us
 // before any output (authorization, missing session) is still a clean JSON error.
 type csvResponse struct {
 	w       http.ResponseWriter
+	name    string // download file name; "" = attendance.csv
 	started bool
 }
 
@@ -1135,7 +1161,11 @@ func (c *csvResponse) Write(p []byte) (int, error) {
 	if !c.started {
 		c.started = true
 		c.w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		c.w.Header().Set("Content-Disposition", `attachment; filename="attendance.csv"`)
+		name := c.name
+		if name == "" {
+			name = "attendance.csv"
+		}
+		c.w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	}
 	return c.w.Write(p)
 }
@@ -1156,6 +1186,40 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request, u app.User) e
 	return nil
 }
 
+func reportQuery(r *http.Request) app.ReportQuery {
+	q := r.URL.Query()
+	return app.ReportQuery{From: q.Get("from"), To: q.Get("to"), Title: q.Get("title")}
+}
+
+func (s *Server) orgReport(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	rep, err := s.svc.OrgReport(r.Context(), u, org, reportQuery(r))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, rep)
+	return nil
+}
+
+func (s *Server) orgReportCSV(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	cw := &csvResponse{w: w, name: "attendance-report.csv"}
+	if err := s.svc.ReportCSV(r.Context(), u, org, reportQuery(r), cw); err != nil {
+		if !cw.started {
+			return err
+		}
+		s.log.Error("csv report aborted", "err", err.Error())
+		panic(http.ErrAbortHandler)
+	}
+	return nil
+}
+
 func (s *Server) manual(w http.ResponseWriter, r *http.Request, u app.User) error {
 	org, sid, err := orgSession(r)
 	if err != nil {
@@ -1163,12 +1227,21 @@ func (s *Server) manual(w http.ResponseWriter, r *http.Request, u app.User) erro
 	}
 	var in struct {
 		UserID uuid.UUID `json:"user_id"`
+		Email  string    `json:"email"` // instead of user_id: the person's account email
 		Reason string    `json:"reason"`
 	}
 	if err := decode(w, r, &in); err != nil {
 		return err
 	}
-	id, err := s.svc.ManualAttendance(r.Context(), u, org, sid, in.UserID, in.Reason)
+	var id uuid.UUID
+	if in.Email != "" {
+		if !s.creates.allow(u.ID) { // looks up accounts by email: keep it slow
+			return app.TooMany()
+		}
+		id, err = s.svc.ManualAttendanceByEmail(r.Context(), u, org, sid, in.Email, in.Reason)
+	} else {
+		id, err = s.svc.ManualAttendance(r.Context(), u, org, sid, in.UserID, in.Reason)
+	}
 	if err != nil {
 		return err
 	}

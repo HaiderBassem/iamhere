@@ -30,13 +30,15 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
 ## API (all under `/v1`, bearer token, JSON; errors `{error, message}`)
 | | |
 |---|---|
-| `POST /auth/signup` `{name, email, password}`, `POST /auth/signin` `{email, password}` (no session needed) | create an account / sign in; returns `{token, user}`. 400 `invalid_name`/`invalid_email`/`weak_password`, 409 `email_taken`, 401 `wrong_credentials` (same answer for an unknown email), 429 `too_many_attempts` |
+| `POST /auth/signup` `{name, email, password, claim?}`, `POST /auth/signin` `{email, password}` (no session needed) | create an account / sign in; returns `{token, user}`; with a `claim`, sign-up also returns `checkin` (the scan result with a ticket, as `/checkins/scan`) or `checkin_error` (the account is still created). 400 `invalid_name`/`invalid_email`/`weak_password`, 409 `email_taken`, 401 `wrong_credentials` (same answer for an unknown email), 429 `too_many_attempts` |
 | `POST /auth/password/forgot` `{email}`, `POST /auth/password/reset` `{token, password}`, `POST /auth/email/confirm` `{token}` (no session needed) | emailed one-time links: reset (1 h; signs out every other device, signs this one in) and address confirmation (3 days); 410 `link_expired` |
 | `GET /auth/account`, `POST /auth/signout`, `POST /auth/signout-others`, `POST /auth/password` `{current, new}`, `POST /auth/email/resend` | the signed-in account: email and whether it is confirmed, sign out here / everywhere else, change password |
 | `GET/PATCH/DELETE /me`, `GET /me/attendance` | profile (name, E.164 phone), history across every organization, account deletion (anonymizes records, deletes sign-in details) |
+| `POST /checkins/claim` `{token}` (no session needed) | holds a fresh scan for someone without an account: `{claim, expires_in_s: 300, mode, session_title, organization_name}`. Only `POST /auth/signup` accepts the claim (see decision 2); 429 per address |
 | `POST /checkins/scan` `{token}` | validates a fresh QR, returns a short-lived `ticket` plus what is still needed (`needs_gps`, `needs_photo`) and whether the person is `already_recorded` |
 | `POST /checkins` `{ticket \| token, gps?, photo?, photo_hint?}` | finishes a check-in; `photo` is a base64 JPEG/PNG of the screen showing the code (data URL ok, ≤ 1.5 MB), `photo_hint` the code's four corners as the browser saw them. Idempotent per (session, user); 410 `qr_expired`/`ticket_expired`/`session_ended`; 400 `photo_unusable` (retake; message says why); 429 rate limit |
 | `GET /public-config` (no auth) | `{auth: "local", email}`: built-in accounts, and whether emailed links (reset, confirm) work on this server |
+| `POST /workspace` `{timezone?}` | where Start on the home screen puts a session: the first organization the person may start sessions in (owned first), or a personal workspace created now, named after them |
 | `GET/POST /orgs`, `GET/PUT /orgs/{o}/settings`, `GET /members`, `PUT/DELETE /members/{u}` | orgs, policy, RBAC |
 | `GET/POST /orgs/{o}/invites`, `DELETE .../{i}`, `POST /invites/accept` `{token}` | single-use join links (token shown once, only its hash is stored; 7 d default, 30 d max); owners are never created by invite; only owners mint admin invites |
 | `GET/POST /orgs/{o}/venues`, `DELETE .../{v}` | registered places `{name, lat, lon, radius_m}` with `reference_count`; admin/owner manage, members read |
@@ -46,7 +48,8 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
 | `GET/POST /orgs/{o}/sessions/{s}/references`, `DELETE .../{r}` | the session's "today's photo" (max 4; the creator or a manager, while the session is live; deleted 30 days after the session ends) |
 | `GET /orgs/{o}/references/{r}/image` | a reference photo's image (organizers only) |
 | `POST/GET /orgs/{o}/sessions` (`Idempotency-Key` header), `GET .../{s}`, `/qr`, `POST /close` | creation takes a `title` and optionally `mode` (`standard`\|`strict`; default = organization setting), `anchor` or `venue_id` |
-| `GET .../{s}/attendance` (rows carry `reasons`), `/attendance.csv`, `POST .../attendance/manual`, `POST /orgs/{o}/attendance/{r}/review` | records, export, fallback, review |
+| `GET .../{s}/attendance` (rows carry `reasons`), `/attendance.csv`, `POST .../attendance/manual` `{user_id \| email, reason}`, `POST /orgs/{o}/attendance/{r}/review` | records, export, fallback ("Add someone" by account email; 404 `no_account`), review |
+| `GET /orgs/{o}/report?from&to&title`, `/report.csv` | attendance per person over a period (default the last 30 days, at most 366, in the organization's timezone): `attended` (verified, including added by hand), `to_review`, `rate` = attended / sessions; `titles` lists the period's session titles for the filter. Everyone who checked in at least once is listed; contacts only for roles that may see them; the CSV needs export permission |
 | `GET .../{s}/events` | SSE live counts (use fetch streaming; EventSource cannot send Authorization) |
 
 ## Key decisions
@@ -58,6 +61,12 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
    mode, 1 slot in strict. With codes that short, the QR is checked **once, at scan time** (`/checkins/scan`), which
    returns a signed ticket bound to (session, user) valid for 120 s, so people can finish the location and camera
    steps. A ticket can only be minted from a fresh scan.
+   **Held scans (claims).** Someone without an account needs ~20 s to create one, longer than a code lives. Their fresh
+   scan is exchanged for a claim (HMAC, domain-separated from codes and tickets, bound to the session, 5 minutes), which
+   only `POST /auth/signup` accepts, right after the new account is created; it then mints the normal ticket. An
+   existing account can never use a claim (they sign in and scan again). The cost is honest: in Normal mode, someone
+   in the room could pass a claim to a friend who creates a *new* account within 5 minutes. Strict sessions are not
+   weakened: the location and the photo of the current code are still required after sign-up.
 3. **One effective record** per (session, user): `UNIQUE` constraint plus a single upsert; tested with 50 concurrent
    requests from one account and 300 attendees on one QR.
 4. **Session location** (`location_source`), first match wins: explicit `venue_id` (venue centre + radius) → organizer

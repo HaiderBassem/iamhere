@@ -51,6 +51,11 @@ const PATHS = {
   building: 'M4 20V5l8-2v17M12 9h8v11M7.500 8h1M7.500 12h1M7.500 16h1M15.500 13h1M15.500 16.500h1M2.500 20h19',
   calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
   sparkle: 'M12 3l1.800 5.200L19 10l-5.200 1.800L12 17l-1.800-5.200L5 10l5.200-1.800z',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2',
+  server: 'M4 4h16v7H4zM4 13h16v7H4zM8 7.500h.01M8 16.500h.01',
+  chat: 'M4 5h16v11H9.500L5 20v-4H4z',
+  pen: 'M4 20l4.500-1L19 8.500 15.500 5 5 15.500zM13.500 7l3.500 3.500',
+  file: 'M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6',
 };
 export function icon(name) {
   const s = document.createElementNS(SVG, 'svg');
@@ -139,4 +144,17 @@ export function loadScript(src) {
     }));
   }
   return scripts.get(src);
+}
+
+/** A QR code as SVG (needs /vendor/qrcode.js loaded). */
+export function qrSvg(text) {
+  const q = window.qrcode(0, 'M');
+  q.addData(text);
+  q.make();
+  const doc = new DOMParser().parseFromString(q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }), 'image/svg+xml');
+  const svg = document.importNode(doc.documentElement, true);
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', t('Attendance QR code'));
+  return svg;
 }

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>I Am Here — Design preview</title>
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    .pv { max-inline-size: 1040px; margin-inline: auto; padding: 32px 16px 64px; display: grid; gap: 36px; }
+    .pv section { display: grid; gap: 14px; }
+    .pv h2 { border-block-end: 1px solid var(--line); padding-block-end: 8px; }
+    .swatches { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+    .sw { display: grid; grid-template-columns: 36px 36px 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+    .sw .chipcol { grid-row: span 2; inline-size: 36px; block-size: 36px; border-radius: var(--radius-xs); border: 1px solid rgb(0 0 0 / .12); }
+    .sw code { font-family: var(--font-mono); font-size: .85rem; }
+    .demo-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .type-scale > * { border-block-end: 1px dashed var(--line); padding-block: 6px; }
+  </style>
+</head>
+<body>
+<div class="pv">
+  <header class="stack-sm">
+    <a class="brand" href="/"><img src="/assets/logo.svg" alt="" width="32" height="32"> I Am Here</a>
+    <h1>Design preview</h1>
+    <p class="muted">Every token and component, rendered from the live <code>theme.css</code> and <code>app.css</code>. Switch your system between light and dark to see both themes. The reasoning is in <code>docs/DESIGN.md</code>; the values are in <a href="/design-tokens.json">design-tokens.json</a>.</p>
+  </header>
+
+  <section aria-labelledby="c">
+    <h2 id="c">Color <small class="muted">(light · dark)</small></h2>
+    <ul class="swatches">
+      <li class="sw"><span class="chipcol" style="background:#0E6B73"></span><span class="chipcol" style="background:#5CC6C9"></span><code>--brand</code><small class="muted">#0E6B73 · #5CC6C9</small></li><li class="sw"><span class="chipcol" style="background:#0A545B"></span><span class="chipcol" style="background:#86D7D9"></span><code>--brand-strong</code><small class="muted">#0A545B · #86D7D9</small></li><li class="sw"><span class="chipcol" style="background:#FFFFFF"></span><span class="chipcol" style="background:#062226"></span><code>--brand-ink</code><small class="muted">#FFFFFF · #062226</small></li><li class="sw"><span class="chipcol" style="background:#E1EFEF"></span><span class="chipcol" style="background:#123236"></span><code>--brand-soft</code><small class="muted">#E1EFEF · #123236</small></li><li class="sw"><span class="chipcol" style="background:#F2A516"></span><span class="chipcol" style="background:#F5B83D"></span><code>--accent</code><small class="muted">#F2A516 · #F5B83D</small></li><li class="sw"><span class="chipcol" style="background:#10222A"></span><span class="chipcol" style="background:#10222A"></span><code>--accent-ink</code><small class="muted">#10222A · #10222A</small></li><li class="sw"><span class="chipcol" style="background:#F5F3EE"></span><span class="chipcol" style="background:#0C1517"></span><code>--bg</code><small class="muted">#F5F3EE · #0C1517</small></li><li class="sw"><span class="chipcol" style="background:#FFFFFF"></span><span class="chipcol" style="background:#132124"></span><code>--surface</code><small class="muted">#FFFFFF · #132124</small></li><li class="sw"><span class="chipcol" style="background:#EDEAE2"></span><span class="chipcol" style="background:#1A2C30"></span><code>--surface-2</code><small class="muted">#EDEAE2 · #1A2C30</small></li><li class="sw"><span class="chipcol" style="background:#DFDACE"></span><span class="chipcol" style="background:#26393F"></span><code>--line</code><small class="muted">#DFDACE · #26393F</small></li><li class="sw"><span class="chipcol" style="background:#10222A"></span><span class="chipcol" style="background:#E7EEEE"></span><code>--text</code><small class="muted">#10222A · #E7EEEE</small></li><li class="sw"><span class="chipcol" style="background:#4E5E63"></span><span class="chipcol" style="background:#9FB2B4"></span><code>--muted</code><small class="muted">#4E5E63 · #9FB2B4</small></li><li class="sw"><span class="chipcol" style="background:#1C7A47"></span><span class="chipcol" style="background:#4CC982"></span><code>--ok</code><small class="muted">#1C7A47 · #4CC982</small></li><li class="sw"><span class="chipcol" style="background:#E3F2E8"></span><span class="chipcol" style="background:#123425"></span><code>--ok-soft</code><small class="muted">#E3F2E8 · #123425</small></li><li class="sw"><span class="chipcol" style="background:#9A5B00"></span><span class="chipcol" style="background:#F0B657"></span><code>--warn</code><small class="muted">#9A5B00 · #F0B657</small></li><li class="sw"><span class="chipcol" style="background:#FBF0D9"></span><span class="chipcol" style="background:#3A2C10"></span><code>--warn-soft</code><small class="muted">#FBF0D9 · #3A2C10</small></li><li class="sw"><span class="chipcol" style="background:#B5332A"></span><span class="chipcol" style="background:#FF8A7D"></span><code>--bad</code><small class="muted">#B5332A · #FF8A7D</small></li><li class="sw"><span class="chipcol" style="background:#FBE7E4"></span><span class="chipcol" style="background:#3D1C1A"></span><code>--bad-soft</code><small class="muted">#FBE7E4 · #3D1C1A</small></li><li class="sw"><span class="chipcol" style="background:#FFFFFF"></span><span class="chipcol" style="background:#0C1517"></span><code>--on-status</code><small class="muted">#FFFFFF · #0C1517</small></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="t">
+    <h2 id="t">Type — IBM Plex Sans</h2>
+    <div class="type-scale stack-xs">
+      <p class="land-hero" style="padding:0"><span style="font-size:clamp(2.4rem,1.3rem + 4.2vw,4.1rem);font-weight:700;letter-spacing:-.035em;line-height:1.02">One title. One QR code.</span></p>
+      <h1>Page title (h1)</h1>
+      <h2>Section title (h2)</h2>
+      <h3>Group title (h3)</h3>
+      <p>Body text. You're checked in. That code has changed — scan the screen again.</p>
+      <p class="small muted">Small and muted: secondary information, hints and timestamps.</p>
+      <p class="eyebrow">Eyebrow label</p>
+      <p style="font-variant-numeric:tabular-nums;font-weight:650;font-size:2rem">48 / 52 · 92%</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="b">
+    <h2 id="b">Actions</h2>
+    <div class="demo-row">
+      <button class="btn">Start attendance</button>
+      <button class="btn secondary">Show on projector</button>
+      <button class="btn ghost">Add someone</button>
+      <button class="btn ok">Accept</button>
+      <button class="btn danger">Reject</button>
+      <button class="btn small secondary">Small</button>
+      <button class="btn" disabled>Disabled</button>
+      <button class="linkish">Text link</button>
+    </div>
+    <div class="demo-row">
+      <button class="chip-btn" aria-pressed="true">This week</button>
+      <button class="chip-btn" aria-pressed="false">This month</button>
+      <label class="switch"><input type="checkbox" checked> <span><b>Strict</b><br><span class="small muted">Location + a photo of the screen</span></span></label>
+    </div>
+  </section>
+
+  <section aria-labelledby="f">
+    <h2 id="f">Feedback</h2>
+    <div class="demo-row">
+      <span class="chip ok">Checked in</span><span class="chip warn">To review</span><span class="chip bad">Rejected</span><span class="chip brand">Strict</span><span class="chip">Normal</span>
+    </div>
+    <div class="banner">Location is off. Turn it on to check in to a strict session.</div>
+    <div class="banner ok">Saved.</div>
+    <div class="banner bad">That code has changed. Scan the screen again.</div>
+    <div class="empty"><b>No one yet</b><span>Names appear here as people scan the code.</span></div>
+  </section>
+
+  <section aria-labelledby="h">
+    <h2 id="h">Home composer</h2>
+    <div class="card composer">
+      <h1>Start attendance</h1>
+      <div class="composer-row"><input class="input" aria-label="Title" value="Lecture – Sun 11 Oct"><button class="btn">Start</button></div>
+      <div class="composer-meta"><label class="switch"><input type="checkbox"> <span>Strict <span class="small muted">· location + photo</span></span></label><span class="small muted">In: Your workspace</span></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="p">
+    <h2 id="p">The pass (check-in success)</h2>
+    <div class="result">
+      <div class="pass">
+        <div class="pass-top"><span class="eyebrow">Example Academy</span><h2>Software Engineering — Week 6</h2><span class="muted small">Sara Ahmed</span></div>
+        <div class="pass-cut"></div>
+        <div class="pass-bottom"><div class="stack-xs"><span>Checked in</span><b>Sun 11 Oct · 09:02</b></div><div class="stamp ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Here</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="r">
+    <h2 id="r">Report</h2>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Name</th><th class="num">Attended</th><th class="num">Rate</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Sara Ahmed</td><td class="num">11 / 12</td><td class="num"><span class="rate"><i><i style="inline-size:92%"></i></i>92%</span></td></tr>
+        <tr><td class="name">Omar Khalid</td><td class="num">7 / 12</td><td class="num"><span class="rate low"><i><i style="inline-size:58%"></i></i>58%</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+</div>
+</body>
+</html>

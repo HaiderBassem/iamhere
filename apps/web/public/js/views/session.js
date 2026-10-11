@@ -1,22 +1,10 @@
-import { h, mount, icon, confirmDialog, fmtTime, loading, loadScript } from '../ui.js';
+import { h, mount, icon, confirmDialog, fmtTime, loading, loadScript, toast, qrSvg } from '../ui.js';
 import { get, post, stream, download } from '../api.js';
 import { can, STATUS, modeLabel, reasonText, fail } from '../lib.js';
 import { photoPanel } from '../photos.js';
 import { t, tn } from '../i18n.js';
 
 const REVIEW_REASON = { verified: t('Approved by reviewer'), rejected: t('Rejected by reviewer'), revoked: t('Revoked by reviewer') };
-
-export function qrSvg(text) {
-  const q = window.qrcode(0, 'M');
-  q.addData(text);
-  q.make();
-  const doc = new DOMParser().parseFromString(q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }), 'image/svg+xml');
-  const svg = document.importNode(doc.documentElement, true);
-  svg.setAttribute('shape-rendering', 'crispEdges');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', t('Attendance QR code'));
-  return svg;
-}
 
 export default async function session({ page, params: [orgId, sid], orgById, refreshOrgs, state, setTitle, onCleanup, stale }) {
   let org = orgById(orgId);
@@ -127,6 +115,7 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
     if (shownState === s.status) return;
     shownState = s.status;
     mount(actions,
+      can.start(org.role) && h('button', { class: 'btn secondary', type: 'button', onClick: addSomeone }, icon('plus'), t('Add someone')),
       canEnd() && h('button', { class: 'btn secondary', type: 'button', onClick: close }, t('End session')),
       can.export(org.role) && h('button', { class: 'btn secondary', type: 'button', onClick: exportCsv }, icon('download'), t('Download list')),
       !live() && can.start(org.role) && h('a', { class: 'btn', href: `#/o/${orgId}` }, t('Start a new one')));
@@ -144,6 +133,47 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
     if (!(await confirmDialog({ title: t('End this session?'), body: t('People will no longer be able to check in.'), confirm: t('End session'), danger: true }))) return;
     try { s = await post(`${base}/close`); paintHeader(); refreshList(); } catch (err) { fail(err); }
   }
+  // Someone whose phone died, or who has none: added by their account email.
+  // Stored as "added by hand" with the reason, never as a scan.
+  function addSomeone() {
+    const reasons = [t('Phone not working'), t('No phone with them'), t('Could not scan')];
+    let reason = reasons[0];
+    const email = h('input', { class: 'input', id: 'add-email', type: 'email', required: true, autocomplete: 'off', inputmode: 'email',
+      autocapitalize: 'off', spellcheck: 'false', placeholder: 'name@example.com' });
+    const chips = h('div', { class: 'chips', role: 'group', 'aria-label': t('Why') }, reasons.map((r, i) => h('button', {
+      type: 'button', class: 'chip-btn', 'aria-pressed': String(i === 0),
+      onClick: (e) => { reason = r; chips.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === e.currentTarget))); },
+    }, r)));
+    const err = h('div', { class: 'banner bad', role: 'alert', hidden: true });
+    const go = h('button', { class: 'btn', type: 'submit' }, t('Add'));
+    const d = h('dialog', { 'aria-labelledby': 'add-title' },
+      h('form', {
+        class: 'stack',
+        onSubmit: async (e) => {
+          e.preventDefault();
+          if (!email.value.trim()) return email.focus();
+          go.disabled = true; err.hidden = true;
+          try {
+            await post(`${base}/attendance/manual`, { email: email.value.trim(), reason });
+            d.close();
+            toast(t('Added'), 'ok');
+            refreshList(); s = await get(base); paintHeader();
+          } catch (e2) { err.textContent = e2.message; err.hidden = false; go.disabled = false; email.focus(); }
+        },
+      },
+      h('div', { class: 'stack-xs' }, h('h2', { id: 'add-title' }, t('Add someone')),
+        h('p', { class: 'muted small' }, t('For someone who cannot scan. They need an account; enter the email they signed up with.'))),
+      err,
+      h('div', { class: 'field' }, h('label', { for: 'add-email' }, t('Their email')), email),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, t('Why')), chips),
+      h('div', { class: 'row', style: 'justify-content:flex-end' },
+        h('button', { class: 'btn secondary', type: 'button', onClick: () => d.close() }, t('Cancel')), go)));
+    d.addEventListener('close', () => d.remove());
+    document.body.append(d);
+    d.showModal();
+    email.focus();
+  }
+
   async function exportCsv() {
     try { await download(`${base}/attendance.csv`, `${s.title.replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 40) || 'attendance'}.csv`); } catch (err) { fail(err); }
   }

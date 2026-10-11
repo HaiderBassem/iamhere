@@ -1,0 +1,435 @@
+{
+  "contract": "docs/DESIGN.md section 1 (design contract): civic-utility tone, the stamped pass as the memorable detail, phone (390x844) and desktop (1440x900) targets, AA contrast in both themes, 44 px primary targets, every data view with loading/empty/error/partial/success states.",
+  "targetViewports": [
+    "390x844",
+    "1440x900"
+  ],
+  "accessibility": {
+    "status": "pass",
+    "evidence": "Measured on 26 renders (light and dark): every text element meets WCAG AA contrast against its real background, every form control has an accessible name, every target is at least 24 px (primary actions 44-54 px), no script errors. Keyboard: 8 tab stops on home all show a 3 px outline. Reduced motion: the stamp and other animations are off."
+  },
+  "responsive": {
+    "status": "pass",
+    "evidence": "No horizontal scrolling on any of 26 renders at 390x844 and 1440x900; phone uses the bottom tab bar and stacked composer, desktop the top navigation, two-column live session and five-column landing grids. Long and right-to-left names (Kurdish) wrap without overlap."
+  },
+  "contentStates": {
+    "partial": {
+      "status": "pass",
+      "evidence": "Live session while people are still arriving (session-live-*): the count and list show who is in so far, the timer and \"Ends in\" mark that more can arrive; list refreshes live."
+    },
+    "success": {
+      "status": "pass",
+      "evidence": "Scanning a live code shows the pass with a \"Here\" stamp, the session, the person and the time, and a Done button (pass-*). Already-checked-in people get the same pass marked \"Already on the list\"."
+    },
+    "empty": {
+      "status": "pass",
+      "evidence": "A new account's home (home-empty-*): both actions stay available; the empty history explains that check-ins from every organization will appear there. Report with no data says \"No sessions in this period\"."
+    },
+    "loading": {
+      "status": "pass",
+      "evidence": "Report with a delayed response (loading-*): header, tabs and filters keep their place; only the data area shows a labelled spinner (role=status). The same pattern is used on every data view."
+    },
+    "error": {
+      "status": "pass",
+      "evidence": "An invalid or expired code (error-*) shows what happened and two ways on: Scan again, Back to home. Form errors appear in an alert banner above the form and focus the field to fix."
+    },
+    "permission": {
+      "status": "pass",
+      "evidence": "Scanner with the camera blocked (permission-*): says the camera is blocked, how to allow it in the browser, and that the phone's camera app works instead. Location in Strict sessions explains why before the browser asks, and offers to continue to review."
+    }
+  },
+  "renderedEvidence": [
+    {
+      "viewport": "390x844",
+      "artifact": "landing-390x844.jpg",
+      "observation": "Landing: promise headline, live rotating QR demo with names arriving, primary \"Start free\" (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "signup-held-390x844.jpg",
+      "observation": "Sign-up opened from a scanned code: shows the session being checked in to, three fields, one button (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "home-organizer-390x844.jpg",
+      "observation": "Organizer home: title pre-filled with Start, Strict switch, Check in, the live session, workspace (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "session-live-390x844.jpg",
+      "observation": "Live session: rotating QR with timer bar, live counts, Add someone, the list so far (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "report-390x844.jpg",
+      "observation": "Report per person: period, title filter, attended / sessions, rate bars, below-75% count, Download (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "pass-390x844.jpg",
+      "observation": "Check-in success: the pass with the organization, title, name, time and the \"Here\" stamp; Done (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "landing-390x844-dark.jpg",
+      "observation": "Landing: promise headline, live rotating QR demo with names arriving, primary \"Start free\" (dark). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "signup-held-390x844-dark.jpg",
+      "observation": "Sign-up opened from a scanned code: shows the session being checked in to, three fields, one button (dark). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "home-organizer-390x844-dark.jpg",
+      "observation": "Organizer home: title pre-filled with Start, Strict switch, Check in, the live session, workspace (dark). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "session-live-390x844-dark.jpg",
+      "observation": "Live session: rotating QR with timer bar, live counts, Add someone, the list so far (dark). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "report-390x844-dark.jpg",
+      "observation": "Report per person: period, title filter, attended / sessions, rate bars, below-75% count, Download (dark). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "pass-390x844-dark.jpg",
+      "observation": "Check-in success: the pass with the organization, title, name, time and the \"Here\" stamp; Done (dark). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "home-empty-390x844.jpg",
+      "observation": "Empty state: a new account sees Start and Check in, and an empty history that says what will appear (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "loading-390x844.jpg",
+      "observation": "Loading: the report frame (tabs, filters) stays in place while a spinner marks the data area (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "error-390x844.jpg",
+      "observation": "Error: a bad code says what happened in plain words and offers \"Scan again\" and \"Back to home\" (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "permission-390x844.jpg",
+      "observation": "Permission: camera blocked on the scanner explains how to allow it, and the fallback (the phone's own camera app) (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "landing-1440x900.jpg",
+      "observation": "Landing: promise headline, live rotating QR demo with names arriving, primary \"Start free\" (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "signup-held-1440x900.jpg",
+      "observation": "Sign-up opened from a scanned code: shows the session being checked in to, three fields, one button (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "home-organizer-1440x900.jpg",
+      "observation": "Organizer home: title pre-filled with Start, Strict switch, Check in, the live session, workspace (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "session-live-1440x900.jpg",
+      "observation": "Live session: rotating QR with timer bar, live counts, Add someone, the list so far (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "report-1440x900.jpg",
+      "observation": "Report per person: period, title filter, attended / sessions, rate bars, below-75% count, Download (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "pass-1440x900.jpg",
+      "observation": "Check-in success: the pass with the organization, title, name, time and the \"Here\" stamp; Done (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "home-empty-1440x900.jpg",
+      "observation": "Empty state: a new account sees Start and Check in, and an empty history that says what will appear (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "loading-1440x900.jpg",
+      "observation": "Loading: the report frame (tabs, filters) stays in place while a spinner marks the data area (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "error-1440x900.jpg",
+      "observation": "Error: a bad code says what happened in plain words and offers \"Scan again\" and \"Back to home\" (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "permission-1440x900.jpg",
+      "observation": "Permission: camera blocked on the scanner explains how to allow it, and the fallback (the phone's own camera app) (light). Measured: no horizontal scroll (ok), 0 text element(s) under WCAG AA contrast, 0 unlabeled control(s), 0 target(s) under 24 px, 0 script error(s)."
+    }
+  ],
+  "measurements": [
+    {
+      "screen": "landing",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "signup-held",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "home-organizer",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "session-live",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "report",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "pass",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "landing",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "signup-held",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "home-organizer",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "session-live",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "report",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "pass",
+      "viewport": "390x844",
+      "scheme": "dark",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "home-empty",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "loading",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "error",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "permission",
+      "viewport": "390x844",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "landing",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "signup-held",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "home-organizer",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "session-live",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "report",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "pass",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "home-empty",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "loading",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "error",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    },
+    {
+      "screen": "permission",
+      "viewport": "1440x900",
+      "scheme": "light",
+      "overflow": 0,
+      "lowContrast": [],
+      "unlabeled": [],
+      "smallTargets": [],
+      "errors": []
+    }
+  ]
+}

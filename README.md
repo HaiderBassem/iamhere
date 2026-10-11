@@ -1,12 +1,14 @@
 # iamhere
 
-"I Am Here": QR- and GPS-based attendance for organizations. The backend is a Go modular monolith on
+"I Am Here": one title, one QR code, everyone checked in. Attendance for classes, teams and events. The backend is a Go modular monolith on
 PostgreSQL + PostGIS (`apps/api`), a framework-free web app (`apps/web`), a computer-vision service for strict mode
 (`apps/vision`, Python, CPU only), deployed with Docker Compose + Caddy (`infra`).
 One account per person, used everywhere (built-in sign-up, sign-in, password reset). Two modes: **Normal** (a QR code
 that changes every 5 seconds) and **Strict** (QR + GPS + a photo of the screen that must show the current code and the
 room; each room is learned better with use).
 
+- Product and brand: [`docs/PRODUCT.md`](docs/PRODUCT.md) (journeys, assumptions, roadmap), [`docs/BRAND.md`](docs/BRAND.md),
+  design system [`docs/DESIGN.md`](docs/DESIGN.md) (tokens, components, rendered checks in `docs/design-evidence/`)
 - Backend design, API reference, status and known limits: [`docs/BACKEND.md`](docs/BACKEND.md)
 - Web app (organizers and attendees, no build step), re-skinning guide: [`apps/web/README.md`](apps/web/README.md)
 - Strict mode's photo check (method, measured accuracy, limits): [`docs/VISION.md`](docs/VISION.md)

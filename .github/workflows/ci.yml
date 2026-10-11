@@ -148,6 +148,12 @@ jobs:
           VISION_PYTHON: python
           MAIL_DIR: ${{ runner.temp }}/mail
         run: npm run e2e
+      - name: rendered design check (docs/DESIGN.md)
+        working-directory: apps/web
+        env:
+          BASE_URL: http://localhost:8080
+          OUT: ${{ runner.temp }}/shots/design
+        run: npm run design
       - name: API and vision logs (on failure)
         if: failure()
         run: tail -n 200 "$RUNNER_TEMP/api.log" "$RUNNER_TEMP/vision.log"

@@ -24,6 +24,11 @@ export const MODES = {
 };
 export const modeLabel = (m) => (m === 'standard' ? t('Normal') : t('Strict'));
 
+/** A title that is good enough to keep, so Start works without typing. */
+export const defaultTitle = (d = new Date()) => t('Session – {day}', {
+  day: new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(d),
+});
+
 // ---- statuses & reasons ----------------------------------------------------
 export const STATUS = {
   verified: { label: t('Checked in'), cls: 'ok' },

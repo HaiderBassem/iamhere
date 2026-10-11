@@ -154,6 +154,13 @@ func (s *Service) Scan(ctx context.Context, u User, token string) (ScanResult, e
 	if err := s.stillOpen(c, now); err != nil {
 		return ScanResult{}, err
 	}
+	return s.ticketFor(ctx, u, c, now)
+}
+
+// ticketFor mints the user's ticket on a session whose code (or claim) has
+// just been verified, and lists the steps still needed.
+func (s *Service) ticketFor(ctx context.Context, u User, c *checkinSession, now time.Time) (ScanResult, error) {
+	sid := c.id
 	res := ScanResult{
 		Ticket: qr.SignTicket(c.secret, sid, u.ID, now), ExpiresInS: int(qr.TicketTTL.Seconds()),
 		Mode: string(c.mode), SessionTitle: c.title, OrganizationName: c.orgName,
@@ -169,13 +176,72 @@ func (s *Service) Scan(ctx context.Context, u User, token string) (ScanResult, e
 		res.NeedsPhoto = len(refs) > 0 && s.vis != nil
 	}
 	var status string
-	err = s.pool.QueryRow(ctx, `SELECT status::text FROM attendance_records WHERE session_id=$1 AND user_id=$2`, sid, u.ID).Scan(&status)
+	err := s.pool.QueryRow(ctx, `SELECT status::text FROM attendance_records WHERE session_id=$1 AND user_id=$2`, sid, u.ID).Scan(&status)
 	if err == nil {
 		res.AlreadyRecorded, res.Status = true, status
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return ScanResult{}, err
 	}
 	return res, nil
+}
+
+// ClaimResult holds a scan for someone who is not signed in yet.
+type ClaimResult struct {
+	Claim            string `json:"claim"`
+	ExpiresInS       int    `json:"expires_in_s"`
+	Mode             string `json:"mode"`
+	SessionTitle     string `json:"session_title"`
+	OrganizationName string `json:"organization_name"`
+}
+
+// Claim validates a freshly scanned code without an account and holds it for
+// qr.ClaimTTL, so the person can create an account and be checked in without
+// scanning again. The claim is only accepted by SignUp (a new account), never
+// by an existing one: it cannot be used to check in someone who already has an
+// account. Strict sessions still require the location and photo steps after.
+func (s *Service) Claim(ctx context.Context, token string) (ClaimResult, error) {
+	now := s.Now()
+	sid, err := qr.SessionID(token)
+	if err != nil {
+		return ClaimResult{}, errBadQR
+	}
+	c, err := s.loadCheckinSession(ctx, sid, nil, nil)
+	if err != nil {
+		return ClaimResult{}, err
+	}
+	if err := s.verifyQR(c, token, now); err != nil {
+		return ClaimResult{}, err
+	}
+	if err := s.stillOpen(c, now); err != nil {
+		return ClaimResult{}, err
+	}
+	return ClaimResult{
+		Claim: qr.SignClaim(c.secret, sid, now), ExpiresInS: int(qr.ClaimTTL.Seconds()),
+		Mode: string(c.mode), SessionTitle: c.title, OrganizationName: c.orgName,
+	}, nil
+}
+
+// redeemClaim turns a claim into a ticket for a just-created account.
+func (s *Service) redeemClaim(ctx context.Context, u User, claim string) (ScanResult, error) {
+	now := s.Now()
+	sid, err := qr.ClaimSessionID(claim)
+	if err != nil {
+		return ScanResult{}, errBadQR
+	}
+	c, err := s.loadCheckinSession(ctx, sid, nil, nil)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	if err := qr.VerifyClaim(c.secret, sid, claim, now); err != nil {
+		if errors.Is(err, qr.ErrExpired) {
+			return ScanResult{}, newErr(410, "claim_expired", "That took a while. Scan the code on the screen again.")
+		}
+		return ScanResult{}, errBadQR
+	}
+	if err := s.stillOpen(c, now); err != nil {
+		return ScanResult{}, err
+	}
+	return s.ticketFor(ctx, u, c, now)
 }
 
 // CheckIn verifies one attendee's attempt. Every attendee has an independent

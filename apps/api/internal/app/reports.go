@@ -182,6 +182,27 @@ func (s *Service) ManualAttendance(ctx context.Context, u User, orgID, sid, targ
 	return id, tx.Commit(ctx)
 }
 
+// ManualAttendanceByEmail is ManualAttendance for the person with this
+// account email: what an organizer knows about someone whose phone died.
+func (s *Service) ManualAttendanceByEmail(ctx context.Context, u User, orgID, sid uuid.UUID, email, reason string) (uuid.UUID, error) {
+	if _, err := s.require(ctx, u, orgID, PermManual); err != nil {
+		return uuid.Nil, err
+	}
+	e, err := normEmail(email)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	var target uuid.UUID
+	err = s.pool.QueryRow(ctx, `SELECT user_id FROM accounts WHERE email=$1`, e).Scan(&target)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, newErr(404, "no_account", "No account uses that email. Ask them to sign up with it (it takes 20 seconds), then add them again.")
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return s.ManualAttendance(ctx, u, orgID, sid, target, reason)
+}
+
 // ---- personal history -----------------------------------------------------
 
 type HistoryRow struct {

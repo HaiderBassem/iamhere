@@ -72,7 +72,7 @@ async function emailLink(to, kind) {
   throw new Error(`no ${kind} email for ${to}`);
 }
 
-/** Creates an account through the sign-up page; leaves the person on the welcome screen. */
+/** Creates an account through the sign-up page; it lands on home. */
 async function signUp(page, name, email) {
   await page.goto(BASE + '/#/signup');
   await page.getByLabel('Full name').fill(name);
@@ -82,7 +82,7 @@ async function signUp(page, name, email) {
 }
 
 /** A person with their own account, signed in on a phone-sized screen. */
-async function person(name, { room = 'a', geo = VENUE, desktop = false, organizer = false } = {}) {
+async function person(name, { room = 'a', geo = VENUE, desktop = false } = {}) {
   const b = await browserFor(room);
   const ctx = await b.newContext({
     viewport: desktop ? { width: 1180, height: 820 } : { width: 390, height: 844 },
@@ -101,11 +101,7 @@ async function person(name, { room = 'a', geo = VENUE, desktop = false, organize
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) page.errors.push(m.text()); });
   const email = emailFor(name);
   await signUp(page, name, email);
-  await page.getByRole('heading', { name: new RegExp('^Welcome, ' + name.split(' ')[0]) }).waitFor();
-  if (!organizer) {
-    await page.getByRole('button', { name: /I’m checking in/ }).click();
-    await page.getByRole('heading', { name: new RegExp('Hi ' + name.split(' ')[0]) }).waitFor();
-  }
+  await page.getByRole('heading', { name: new RegExp('Hi ' + name.split(' ')[0]) }).waitFor();
   return { name, email, ctx, page };
 }
 
@@ -133,27 +129,18 @@ const heading = (p) => p.page.locator('main h1').first();
 
 try {
   // ---------------------------------------------------------------------------
-  section('Organizer sets up in seconds');
-  const prof = await person('Prof Ada Lovelace', { desktop: true, organizer: true });
-  await shot(prof, '09-welcome');
-  await prof.page.getByRole('button', { name: /I run sessions/ }).click();
-  await prof.page.getByRole('button', { name: 'School' }).click();
-  await prof.page.getByLabel('Name').fill('Engineering School ' + RUN);
-  await prof.page.getByRole('button', { name: /Create and continue/ }).click();
-  await prof.page.getByRole('heading', { name: 'Start attendance' }).waitFor();
-  check(true, 'sign up, then "I run sessions" + a name: the organization exists and the Start screen is open');
-  await shot(prof, '10-org-start');
-  const orgUrl = prof.page.url();
-
-  // ---------------------------------------------------------------------------
-  section('Normal mode: QR only, rotating every 5 seconds');
-  await prof.page.getByRole('button', { name: /^Normal/ }).click();
+  section('Organizer: sign up, one title, Start');
+  const prof = await person('Prof Ada Lovelace', { desktop: true });
+  check(await prof.page.getByLabel('What is it for?').inputValue() !== '', 'home opens with "Start attendance" and a title already filled in');
+  await shot(prof, '10-home-composer');
   await prof.page.getByLabel('What is it for?').fill('Software Engineering');
-  await prof.page.getByRole('button', { name: /Start & show QR/ }).click();
+  await prof.page.getByRole('button', { name: 'Start', exact: true }).click();
   const url1 = await readQR(prof.page);
-  check(url1 && url1.startsWith(BASE + '/#/c/'), 'the QR on screen decodes to a check-in link: ' + (url1 || '').slice(0, 48) + '…');
+  check(url1 && url1.startsWith(BASE + '/#/c/'), 'sign up -> type a title -> Start: a rotating code is on screen (no organization to set up): ' + (url1 || '').slice(0, 40) + '…');
+  check(await prof.page.locator('.back').first().textContent() === 'Prof Ada Lovelace', 'the session went into a personal workspace named after the organizer');
   await shot(prof, '20-live-normal');
   const sessionUrl = prof.page.url();
+  const orgUrl = sessionUrl.replace(/\/s\/[\w-]+$/, '');
 
   const awat = await person('ئاوات کوردی');                 // a Kurdish name must work end to end
   await awat.page.goto(url1);
@@ -167,6 +154,7 @@ try {
   await shot(ben, '21-normal-success');
   await prof.page.locator('.stat.ok b').filter({ hasText: '2' }).waitFor({ timeout: 8000 });
   check(true, 'the organizer\'s counter went to 2 live');
+  check(await ben.page.locator('.pass .stamp').isVisible(), 'the attendee gets a pass with a "Here" stamp');
   await prof.page.getByText('ئاوات کوردی').first().waitFor();
   check(true, 'and the Kurdish name displays correctly in the organizer\'s list');
   await prof.page.getByText('Ben Student').first().waitFor();
@@ -191,6 +179,19 @@ try {
   await shot(latecomer, '23-scanner');
 
   check(latecomer.page.errors.length === 0, 'scanner page opened the camera without errors');
+
+  // Lena's phone gave up: the organizer adds her by her email
+  await prof.page.getByRole('button', { name: 'Add someone' }).click();
+  await prof.page.getByRole('dialog').getByLabel('Their email').fill('nobody-' + RUN + '@example.org');
+  await prof.page.getByRole('dialog').getByRole('button', { name: 'Add', exact: true }).click();
+  await prof.page.getByRole('dialog').getByRole('alert').filter({ hasText: /No account uses that email/ }).waitFor();
+  check(true, 'adding an email without an account says what to do');
+  await prof.page.getByRole('dialog').getByLabel('Their email').fill(latecomer.email);
+  await prof.page.getByRole('dialog').getByRole('button', { name: 'No phone with them' }).click();
+  await shot(prof, '25-add-someone');
+  await prof.page.getByRole('dialog').getByRole('button', { name: 'Add', exact: true }).click();
+  await prof.page.locator('.item', { hasText: 'Late Lena' }).getByText(/added by hand/).waitFor({ timeout: 8000 });
+  check(true, '"Add someone" by email puts them on the list, marked as added by hand');
 
   // The in-app scanner must read a real QR from the camera: point a fake camera at
   // the code currently on the organizer's screen and check it jumps to that check-in.
@@ -387,6 +388,22 @@ try {
   check(true, 'the organizer\'s count follows (4 in)');
 
   // ---------------------------------------------------------------------------
+  section('Reports: attendance per person');
+  await prof.page.goto(orgUrl + '/report');
+  await prof.page.locator('table.table').waitFor();
+  const benRow = prof.page.locator('tr', { hasText: 'Ben Student' });
+  check((await benRow.textContent()).includes('1 / 2') && (await benRow.textContent()).includes('50%'), 'Ben: 1 of 2 sessions, 50%');
+  check((await prof.page.locator('tr', { hasText: 'Late Lena' }).textContent()).includes('1 / 2'), 'someone added by hand counts as attended');
+  check(await prof.page.getByText(/below 75%/).first().isVisible(), 'people below 75% are counted at the top');
+  await shot(prof, '38-report');
+  await prof.page.getByLabel('Title').selectOption('Strict exam');
+  await prof.page.locator('tr', { hasText: 'Carla Inside' }).filter({ hasText: '1 / 1' }).waitFor();
+  check(!(await prof.page.locator('tr', { hasText: 'Ben Student' }).count()), 'choosing one title reports on those sessions only');
+  const [rdl] = await Promise.all([prof.page.waitForEvent('download'), prof.page.getByRole('button', { name: 'Download' }).click()]);
+  const rcsv = readFileSync(await rdl.path(), 'utf8');
+  check(rcsv.includes('Carla Inside') && rcsv.includes('Rate (%)'), 'the report downloads as a spreadsheet');
+
+  // ---------------------------------------------------------------------------
   section('Team: invite by link');
   await prof.page.goto(orgUrl);
   await prof.page.getByRole('link', { name: 'Team' }).click();
@@ -397,7 +414,7 @@ try {
   await shot(prof, '40-team-invite');
   const rev = await person('Rita Reviewer');
   await rev.page.goto(link);
-  await rev.page.getByRole('heading', { name: /Engineering School/ }).waitFor();
+  await rev.page.getByRole('heading', { name: 'Prof Ada Lovelace' }).waitFor();
   check(!(await rev.page.getByRole('heading', { name: 'Start attendance' }).count()), 'invited reviewer joins; no "Start attendance" for their role');
   const again = await person('Sam Second');
   await again.page.goto(link);
@@ -415,15 +432,19 @@ try {
   v.page.errors = [];
   v.page.on('pageerror', (e) => v.page.errors.push(e.message));
   await v.page.goto(BASE + '/');
-  await v.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
-  check(await v.page.getByRole('link', { name: 'Get started' }).first().isVisible(), 'a visitor sees the start page, with sign up and sign in');
+  await v.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
+  check(await v.page.getByRole('link', { name: 'Start free' }).first().isVisible(), 'a visitor sees the start page, with sign up and sign in');
+  await v.page.locator('.demo-qr svg').waitFor();
+  check(true, 'the landing page shows a live, rotating QR demo');
   await shot(v, '60-landing');
 
-  // a check-in link opened without an account: sign up first, then scan once more
-  await prof.page.goto(strictSession);
+  // a check-in link opened without an account: the scan is held while the account is created
+  await prof.page.goto(BASE + '/#/');
+  await prof.page.getByLabel('What is it for?').fill('Open Day');
+  await prof.page.getByRole('button', { name: 'Start', exact: true }).click();
   await v.page.goto(await readQR(prof.page));
   await v.page.getByRole('heading', { name: 'Create your account' }).waitFor();
-  check(await v.page.getByText(/One account checks you in everywhere/).isVisible(), 'a check-in link without an account asks to create one, and says why');
+  check(await v.page.locator('.auth-context').getByText('Open Day').isVisible(), 'a check-in link without an account asks to create one, and shows which session it is for');
   await v.page.getByLabel('Full name').fill(v.name);
   await v.page.getByLabel('Email').fill(carla.email);
   await v.page.getByLabel('Password', { exact: true }).fill('password123');
@@ -438,8 +459,16 @@ try {
   await sleep(11000);                                                       // the code on the screen moves on meanwhile
   await v.page.getByLabel('Email').fill(v.email);
   await v.page.getByRole('button', { name: 'Create account' }).click();
-  await v.page.getByRole('heading', { name: /You’re signed in. Now scan once more/ }).waitFor();
-  check(true, 'after signing up from a check-in link, it explains the code moved on and offers the scanner');
+  await v.page.getByRole('heading', { name: /You’re checked in/ }).waitFor();
+  check(true, 'after signing up from a check-in link, they are checked in without scanning again (the code had moved on)');
+  await shot(v, '64-checked-in-after-signup');
+  await prof.page.getByText('Vera Visitor').first().waitFor({ timeout: 8000 });
+  check(true, 'and the organizer sees them arrive');
+
+  // the organizer finds the running session again from home
+  await prof.page.goto(BASE + '/#/');
+  await prof.page.getByRole('heading', { name: 'Live now' }).waitFor();
+  check(await prof.page.locator('.item', { hasText: 'Open Day' }).isVisible(), 'home lists sessions that are still live');
 
   // confirm the email from the link that was emailed
   await v.page.goto(BASE + (await emailLink(v.email, 'verify')));
@@ -449,7 +478,7 @@ try {
   // sign out, wrong password, right password
   await v.page.goto(BASE + '/#/me');
   await v.page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await v.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
+  await v.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
   await v.page.goto(BASE + '/#/signin');
   await v.page.getByRole('heading', { name: 'Welcome back' }).waitFor();
   await v.page.getByLabel('Email').fill(v.email);
@@ -465,7 +494,7 @@ try {
   // forgot password -> emailed link -> new password -> signed in; the old one stops working
   await v.page.goto(BASE + '/#/me');
   await v.page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await v.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
+  await v.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
   await v.page.goto(BASE + '/#/signin');
   await v.page.getByRole('link', { name: 'Forgot password?' }).click();
   await v.page.getByRole('heading', { name: 'Reset your password' }).waitFor();
@@ -483,7 +512,7 @@ try {
   await prof.page.getByRole('button', { name: 'Your account' }).click();
   await shot(prof, '63-account-menu');
   await prof.page.getByRole('menuitem', { name: 'Sign out' }).click();
-  await prof.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
+  await prof.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
   await prof.page.goto(strictSession);
   await prof.page.getByRole('heading', { name: 'Welcome back' }).waitFor();
   await prof.page.getByLabel('Email').fill(prof.email);

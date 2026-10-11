@@ -1,18 +1,17 @@
-import { h, mount, icon, toast, fmtWhen, fmtDay, uuid } from '../ui.js';
+import { h, mount, icon, toast, fmtWhen, uuid } from '../ui.js';
 import { get, post } from '../api.js';
-import { can, MODES, ROLE_LABEL, modeLabel, fail, getPosition } from '../lib.js';
+import { can, MODES, ROLE_LABEL, modeLabel, fail, getPosition, defaultTitle } from '../lib.js';
 import { t, tn } from '../i18n.js';
 
 export function orgHeader(org, active) {
-  const tabs = [['', t('Attendance')], ...(can.manage(org.role) ? [['/team', t('Team')], ['/places', t('Places')], ['/settings', t('Settings')]] : [])];
+  const tabs = [['', t('Sessions')], ['/report', t('Reports')],
+    ...(can.manage(org.role) ? [['/team', t('Team')], ['/places', t('Places')], ['/settings', t('Settings')]] : [])];
   return h('div', {},
-    h('a', { class: 'back', href: '#/' }, t('All organizations')),
+    h('a', { class: 'back', href: '#/' }, icon('back'), t('Home')),
     h('div', { class: 'page-head' }, h('h1', {}, org.name), h('p', { class: 'muted small' }, t('Your role: {role}', { role: t(ROLE_LABEL[org.role]) }))),
     tabs.length > 1 && h('nav', { class: 'tabs', 'aria-label': org.name },
       tabs.map(([p, label]) => h('a', { href: `#/o/${org.id}${p}`, 'aria-current': active === p ? 'page' : false }, label))));
 }
-
-const defaultTitle = () => t('Class – {day}', { day: fmtDay(new Date()) });
 
 export default async function org({ page, params: [id], orgById, state, navigate, setTitle, refreshOrgs, stale }) {
   let o = orgById(id);
