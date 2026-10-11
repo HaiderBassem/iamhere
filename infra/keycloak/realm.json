@@ -18,7 +18,7 @@
       "directAccessGrantsEnabled": false,
       "redirectUris": ["https://REPLACE_WITH_DOMAIN/*"],
       "webOrigins": ["https://REPLACE_WITH_DOMAIN"],
-      "attributes": { "pkce.code.challenge.method": "S256" }
+      "attributes": { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "+" }
     }
   ],
   "components": {

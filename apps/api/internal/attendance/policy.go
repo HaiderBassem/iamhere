@@ -7,11 +7,21 @@ import "math"
 
 type Mode string
 
+// Two modes are offered to users:
+//
+//	standard ("Normal"): the rotating QR code is the only check.
+//	strict:              QR + GPS + a live photo matched against the place.
+//
+// "visual" is a legacy value from before the photo check existed; it behaves
+// exactly like strict.
 const (
 	ModeStandard Mode = "standard"
 	ModeVisual   Mode = "visual"
 	ModeStrict   Mode = "strict"
 )
+
+// Checked reports whether the mode checks location and photo evidence at all.
+func (m Mode) Checked() bool { return m == ModeStrict || m == ModeVisual }
 
 type Status string
 
@@ -55,6 +65,7 @@ const (
 	ReasonVisualRequired  = "visual_check_required"
 	ReasonVisualNotSetUp  = "visual_not_configured"
 	ReasonGPSWithinRadius = "gps_within_radius"
+	ReasonQROnly          = "qr_only"
 )
 
 // Decide combines GPS evidence under the org policy. Principles:
@@ -64,13 +75,18 @@ const (
 //     distance minus the reported uncertainty still exceeds the radius.
 //   - Verified means "evidence is consistent with presence", not "was present".
 func Decide(p Policy, g GPSReading, visualMatched bool) Decision {
+	// Normal mode: a valid, fresh QR code is the whole check. Location and photo
+	// are neither requested nor evaluated, so nothing can send it to review.
+	if !p.Mode.Checked() {
+		return Decision{StatusVerified, []string{ReasonQROnly}}
+	}
 	gps := gpsReason(p, g)
 	if gps == ReasonOutsideRadius {
 		return Decision{StatusRejected, []string{gps}}
 	}
 	reasons := []string{gps}
 
-	if (p.Mode == ModeVisual || p.Mode == ModeStrict) && !visualMatched {
+	if !visualMatched {
 		if p.VisualAvailable {
 			reasons = append(reasons, ReasonVisualRequired)
 		} else {

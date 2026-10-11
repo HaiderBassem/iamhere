@@ -1,0 +1,10 @@
+{
+  "name": "I Am Here",
+  "short_name": "I Am Here",
+  "description": "Attendance in one scan.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f7fb",
+  "theme_color": "#4338ca",
+  "icons": [{ "src": "/assets/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

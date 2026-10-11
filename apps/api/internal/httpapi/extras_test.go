@@ -1,10 +1,19 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/base64"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/iamhere/api/internal/app"
@@ -149,4 +158,142 @@ func TestRecovererPreservesAbort(t *testing.T) {
 		t.Fatalf("ordinary panic must be a 500: %v %v", resp, err)
 	}
 	resp.Body.Close()
+}
+
+// photoDataURL renders a deterministic synthetic scene as a canvas-style data URL.
+func photoDataURL(seed int64, brightness int) string {
+	const w, h = 320, 240
+	r := rand.New(rand.NewSource(seed))
+	type blk struct{ x0, y0, x1, y1, l int }
+	var blks []blk
+	for i := 0; i < 14; i++ {
+		x0, y0 := r.Intn(w*3/4), r.Intn(h*3/4)
+		blks = append(blks, blk{x0, y0, x0 + 20 + r.Intn(w/3), y0 + 20 + r.Intn(h/3), r.Intn(256)})
+	}
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			l := 80 + y*60/h
+			for _, b := range blks {
+				if x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 {
+					l = b.l
+				}
+			}
+			img.SetGray(x, y, color.Gray{uint8(max(0, min(255, l+brightness)))})
+		}
+	}
+	var b bytes.Buffer
+	_ = jpeg.Encode(&b, img, &jpeg.Options{Quality: 80})
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(b.Bytes())
+}
+
+func TestStrictFlowOverHTTP(t *testing.T) {
+	ts := newServer(t)
+	anon := client{t, ts.URL, ""}
+	owner := client{t, ts.URL, "dev:own-s:Owner"}
+	stu := client{t, ts.URL, "dev:stu-s:Student"}
+
+	// public config needs no sign-in (the web app reads it before login)
+	var pc map[string]any
+	anon.json("GET", "/v1/public-config", nil, 200, &pc)
+	if pc["auth"] == nil {
+		t.Fatalf("%v", pc)
+	}
+
+	var org app.Org
+	owner.json("POST", "/v1/orgs", map[string]any{"name": "Strict Uni", "slug": "strict-uni"}, 201, &org)
+	base := "/v1/orgs/" + org.ID.String()
+	var venue app.Venue
+	owner.json("POST", base+"/venues", map[string]any{"name": "Room 1", "lat": 36.19, "lon": 44.01, "radius_m": 30}, 201, &venue)
+	vbase := base + "/venues/" + venue.ID.String()
+
+	// enrol a reference photo; garbage and covered lenses are refused with clear codes
+	var ref app.VenueReference
+	owner.json("POST", vbase+"/references", map[string]any{"photo": photoDataURL(1, 0)}, 201, &ref)
+	owner.json("POST", vbase+"/references", map[string]any{"photo": "!!notbase64!!"}, 400, nil)
+	owner.json("POST", vbase+"/references", map[string]any{"photo": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString([]byte("plain text, not a picture at all...."))}, 400, nil)
+	var vs struct{ Items []app.Venue }
+	owner.json("GET", base+"/venues", nil, 200, &vs)
+	if vs.Items[0].ReferenceCount != 1 {
+		t.Fatalf("%+v", vs)
+	}
+	var refs struct{ Items []app.VenueReference }
+	owner.json("GET", vbase+"/references", nil, 200, &refs)
+	if len(refs.Items) != 1 {
+		t.Fatalf("%+v", refs)
+	}
+	stu.json("GET", vbase+"/references", nil, 404, nil) // not a member
+
+	var sess app.Session
+	owner.json("POST", base+"/sessions", map[string]any{"title": "Strict", "venue_id": venue.ID, "mode": "strict"}, 201, &sess)
+	owner.json("POST", base+"/sessions", map[string]any{"title": "Bad", "mode": "paranoid"}, 400, nil)
+	var q app.QRInfo
+	owner.json("GET", base+"/sessions/"+sess.ID.String()+"/qr", nil, 200, &q)
+
+	var sc app.ScanResult
+	stu.json("POST", "/v1/checkins/scan", map[string]any{"token": q.Token}, 200, &sc)
+	if !sc.NeedsGPS || !sc.NeedsPhoto || sc.Ticket == "" {
+		t.Fatalf("%+v", sc)
+	}
+	gps := map[string]any{"lat": 36.19001, "lon": 44.01001, "accuracy_m": 8, "fix_age_ms": 400}
+	var res app.CheckInResult
+	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "gps": gps, "photo": photoDataURL(1, 22)}, 200, &res)
+	if res.Status != "verified" || res.Mode != "strict" {
+		t.Fatalf("%+v", res)
+	}
+	// unknown fields are still refused, and an oversized body is not buffered
+	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "bogus": 1}, 400, nil)
+	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "photo": strings.Repeat("A", 2<<20)}, 400, nil)
+	stu.json("POST", "/v1/checkins/scan", map[string]any{"token": "nope"}, 400, nil)
+
+	owner.json("DELETE", vbase+"/references/"+ref.ID.String(), nil, 204, nil)
+	owner.json("DELETE", vbase+"/references/"+ref.ID.String(), nil, 404, nil)
+}
+
+func TestWebAppHosting(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<!doctype html><title>app</title>"), 0o644)
+	os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)"), 0o644)
+	secret := filepath.Join(filepath.Dir(dir), "outside-secret.txt")
+	os.WriteFile(secret, []byte("TOP SECRET"), 0o644)
+
+	h := webApp(dir, cspFor("https://auth.example.org/realms/x"))
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		return rec
+	}
+	if rec := get("/app.js"); rec.Code != 200 || rec.Body.String() != "console.log(1)" {
+		t.Fatalf("static file: %d %q", rec.Code, rec.Body)
+	}
+	// client-side routes fall back to the app shell, with the security headers
+	rec := get("/o/123/team")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<title>app</title>") {
+		t.Fatalf("spa fallback: %d %q", rec.Code, rec.Body)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"script-src 'self'", "https://auth.example.org", "frame-ancestors 'none'", "object-src 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP missing %q: %s", want, csp)
+		}
+	}
+	if strings.Contains(csp, "unsafe-eval") || strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
+		t.Errorf("CSP too loose: %s", csp)
+	}
+	// unknown API paths are JSON 404s, never the app shell
+	if rec := get("/v1/nope"); rec.Code != 404 || !strings.Contains(rec.Body.String(), "not_found") {
+		t.Fatalf("api 404: %d %q", rec.Code, rec.Body)
+	}
+	// path traversal cannot leave the web directory
+	for _, p := range []string{"/../outside-secret.txt", "/..%2foutside-secret.txt", "/%2e%2e/outside-secret.txt", "/a/../../outside-secret.txt"} {
+		if body := get(p).Body.String(); strings.Contains(body, "TOP SECRET") {
+			t.Fatalf("traversal via %s leaked a file", p)
+		}
+	}
+	// only reads
+	post := httptest.NewRecorder()
+	h.ServeHTTP(post, httptest.NewRequest("POST", "/", nil))
+	if post.Code != 404 {
+		t.Fatalf("POST: %d", post.Code)
+	}
 }

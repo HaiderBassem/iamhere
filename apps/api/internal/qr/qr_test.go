@@ -80,3 +80,42 @@ func TestSessionIDExtraction(t *testing.T) {
 		t.Fatalf("got %v %v", got, err)
 	}
 }
+
+func TestTicketLifecycle(t *testing.T) {
+	sid, uid, other := uuid.New(), uuid.New(), uuid.New()
+	tk := SignTicket(secret, sid, uid, t0)
+
+	got, err := TicketSessionID(tk)
+	if err != nil || got != sid {
+		t.Fatalf("session id: %v %v", got, err)
+	}
+	if err := VerifyTicket(secret, sid, uid, tk, t0.Add(TicketTTL-time.Second)); err != nil {
+		t.Fatalf("valid ticket: %v", err)
+	}
+	if err := VerifyTicket(secret, sid, uid, tk, t0.Add(TicketTTL+2*time.Second)); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expired: %v", err)
+	}
+	// a ticket is bound to its user and its session, and to the session secret
+	if err := VerifyTicket(secret, sid, other, tk, t0); !errors.Is(err, ErrBadMAC) {
+		t.Fatalf("other user: %v", err)
+	}
+	if err := VerifyTicket(secret, uuid.New(), uid, tk, t0); !errors.Is(err, ErrBadMAC) {
+		t.Fatalf("other session: %v", err)
+	}
+	if err := VerifyTicket([]byte("another-secret-another-secret-12"), sid, uid, tk, t0); !errors.Is(err, ErrBadMAC) {
+		t.Fatalf("other secret: %v", err)
+	}
+	// extending the expiry by editing the token must break the MAC
+	raw := []byte(tk)
+	raw[len(raw)/2] ^= 1
+	if err := VerifyTicket(secret, sid, uid, string(raw), t0); err == nil {
+		t.Fatal("tampered ticket accepted")
+	}
+	// a QR token is not a ticket and vice versa
+	if _, err := TicketSessionID(Sign(secret, sid, t0, rotation)); err == nil {
+		t.Fatal("QR token accepted as ticket")
+	}
+	if _, err := SessionID(tk); err == nil {
+		t.Fatal("ticket accepted as QR token")
+	}
+}

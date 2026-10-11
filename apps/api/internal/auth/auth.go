@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -79,6 +80,10 @@ func contains(xs []string, s string) bool {
 
 // Dev accepts "dev:<subject>:<full name>". Local development and tests only;
 // config.Validate refuses to enable it in production.
+//
+// Browsers can only send Latin-1 in header values, so a web client sends the
+// name percent-encoded (encodeURIComponent); it is decoded here. A name that is
+// not valid percent-encoding (for example a literal "100%") is taken as-is.
 type Dev struct{}
 
 func (Dev) Verify(_ context.Context, raw string) (Identity, error) {
@@ -86,5 +91,9 @@ func (Dev) Verify(_ context.Context, raw string) (Identity, error) {
 	if len(parts) != 3 || parts[0] != "dev" || parts[1] == "" || strings.TrimSpace(parts[2]) == "" {
 		return Identity{}, ErrUnauthenticated
 	}
-	return Identity{Issuer: "dev", Subject: parts[1], Name: parts[2]}, nil
+	name := parts[2]
+	if dec, err := url.PathUnescape(name); err == nil {
+		name = dec
+	}
+	return Identity{Issuer: "dev", Subject: parts[1], Name: name}, nil
 }

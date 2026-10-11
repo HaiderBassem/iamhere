@@ -12,6 +12,7 @@ import (
 
 	"github.com/iamhere/api/internal/attendance"
 	"github.com/iamhere/api/internal/qr"
+	"github.com/iamhere/api/internal/vision"
 )
 
 // GPSInput is what the attendee's browser reports. Everything here is
@@ -25,13 +26,18 @@ type GPSInput struct {
 	FixAgeMs int64 `json:"fix_age_ms"`
 }
 
+// CheckInInput carries either a freshly scanned QR token or a ticket from Scan.
+// Photo is the raw JPEG/PNG bytes of the live camera frame (strict mode only).
 type CheckInInput struct {
-	Token string
-	GPS   *GPSInput
+	Token  string
+	Ticket string
+	GPS    *GPSInput
+	Photo  []byte
 }
 
 type CheckInResult struct {
 	Status           string     `json:"status"` // verified | needs_review | rejected (or the stored status if already recorded)
+	Mode             string     `json:"mode"`
 	Reasons          []string   `json:"reasons"`
 	RecordID         *uuid.UUID `json:"record_id,omitempty"`
 	AlreadyRecorded  bool       `json:"already_recorded"`
@@ -47,16 +53,148 @@ func (g *GPSInput) validate() error {
 	return nil
 }
 
+var errBadQR = newErr(400, "invalid_qr", "This QR code is not valid. Scan the code shown by the organizer.")
+
+// checkinSession is everything a check-in needs to know about its session.
+type checkinSession struct {
+	id, orgID                uuid.UUID
+	orgName, title, status   string
+	mode                     attendance.Mode
+	endsAt                   time.Time
+	secret                   []byte
+	radius, maxAcc, rotation int
+	hasAnchor                bool
+	anchorAcc                float64
+	venueID                  *uuid.UUID
+	dist                     *float64 // metres from the anchor to the reported position, if both exist
+}
+
+func (s *Service) loadCheckinSession(ctx context.Context, sid uuid.UUID, lat, lon *float64) (*checkinSession, error) {
+	var c checkinSession
+	var mode string
+	err := s.pool.QueryRow(ctx, `SELECT s.org_id, o.name, s.title, s.status::text, s.ends_at, s.qr_secret,
+		s.verification_mode::text, s.gps_radius_m, s.max_gps_accuracy_m, s.qr_rotation_s,
+		s.anchor IS NOT NULL, COALESCE(s.anchor_accuracy_m,0)::float8, s.venue_id,
+		CASE WHEN s.anchor IS NOT NULL AND $2::float8 IS NOT NULL
+		     THEN ST_Distance(s.anchor, ST_SetSRID(ST_MakePoint($3::float8,$2::float8),4326)::geography) END
+		FROM attendance_sessions s JOIN organizations o ON o.id=s.org_id WHERE s.id=$1`, sid, lat, lon).
+		Scan(&c.orgID, &c.orgName, &c.title, &c.status, &c.endsAt, &c.secret, &mode, &c.radius, &c.maxAcc, &c.rotation,
+			&c.hasAnchor, &c.anchorAcc, &c.venueID, &c.dist)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errBadQR // same answer as a forged token: no session enumeration
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.id, c.mode = sid, attendance.Mode(mode)
+	return &c, nil
+}
+
+// qrGrace is how many past rotations a scanned code may be. Checked modes are
+// tighter: a relayed screenshot has to be forwarded within one rotation.
+func (s *Service) qrGrace(m attendance.Mode) uint64 {
+	if m.Checked() && s.opt.QRGraceSlots > 1 {
+		return 1
+	}
+	return s.opt.QRGraceSlots
+}
+
+func (s *Service) verifyQR(c *checkinSession, token string, now time.Time) error {
+	if err := qr.Verify(c.secret, c.id, token, now, time.Duration(c.rotation)*time.Second, s.qrGrace(c.mode)); err != nil {
+		if errors.Is(err, qr.ErrExpired) {
+			return newErr(410, "qr_expired", "That code just changed. Scan the code currently on the screen.")
+		}
+		return errBadQR
+	}
+	return nil
+}
+
+// stillOpen is the server-authoritative end check. The small grace covers a
+// request that started just before the end; it is not client-controlled.
+func (s *Service) stillOpen(c *checkinSession, now time.Time) error {
+	if c.status != "active" || now.After(c.endsAt.Add(s.opt.CheckinGrace)) {
+		return newErr(410, "session_ended", "This attendance session has ended.")
+	}
+	return nil
+}
+
+// ScanResult tells the client what is still needed to finish a check-in.
+type ScanResult struct {
+	Ticket           string `json:"ticket"`
+	ExpiresInS       int    `json:"expires_in_s"`
+	Mode             string `json:"mode"`
+	NeedsGPS         bool   `json:"needs_gps"`
+	NeedsPhoto       bool   `json:"needs_photo"`
+	AlreadyRecorded  bool   `json:"already_recorded"`
+	Status           string `json:"status,omitempty"` // existing record's status when already recorded
+	SessionTitle     string `json:"session_title"`
+	OrganizationName string `json:"organization_name"`
+}
+
+// Scan validates a freshly scanned QR code and returns a ticket plus the list of
+// remaining steps. The QR is only checked here, so with a 5-second rotation the
+// person can still take their time over the location and camera steps.
+func (s *Service) Scan(ctx context.Context, u User, token string) (ScanResult, error) {
+	now := s.Now()
+	sid, err := qr.SessionID(token)
+	if err != nil {
+		return ScanResult{}, errBadQR
+	}
+	c, err := s.loadCheckinSession(ctx, sid, nil, nil)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	if err := s.verifyQR(c, token, now); err != nil {
+		return ScanResult{}, err
+	}
+	if err := s.stillOpen(c, now); err != nil {
+		return ScanResult{}, err
+	}
+	res := ScanResult{
+		Ticket: qr.SignTicket(c.secret, sid, u.ID, now), ExpiresInS: int(qr.TicketTTL.Seconds()),
+		Mode: string(c.mode), SessionTitle: c.title, OrganizationName: c.orgName,
+	}
+	if c.mode.Checked() {
+		// Only ask for steps that can change the outcome: GPS needs a session
+		// anchor, the photo needs reference photos of the place.
+		res.NeedsGPS = c.hasAnchor
+		if c.venueID != nil {
+			refs, err := s.venueFingerprints(ctx, c.orgID, *c.venueID)
+			if err != nil {
+				return ScanResult{}, err
+			}
+			res.NeedsPhoto = len(refs) > 0
+		}
+	}
+	var status string
+	err = s.pool.QueryRow(ctx, `SELECT status::text FROM attendance_records WHERE session_id=$1 AND user_id=$2`, sid, u.ID).Scan(&status)
+	if err == nil {
+		res.AlreadyRecorded, res.Status = true, status
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return ScanResult{}, err
+	}
+	return res, nil
+}
+
 // CheckIn verifies one attendee's attempt. Every attendee has an independent
 // attempt against the same shared QR; the (session,user) unique constraint and a
 // single upsert statement guarantee one effective record under concurrency.
+//
+//	standard: a fresh QR (or a ticket from one) is the whole check.
+//	strict:   QR + GPS against the session anchor + a live photo against the
+//	          venue's reference photos. Anything uncertain goes to review.
 func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckInResult, error) {
 	now := s.Now()
-	badQR := newErr(400, "invalid_qr", "This QR code is not valid. Scan the code shown by the organizer.")
 
-	sid, err := qr.SessionID(in.Token)
+	var sid uuid.UUID
+	var err error
+	if in.Ticket != "" {
+		sid, err = qr.TicketSessionID(in.Ticket)
+	} else {
+		sid, err = qr.SessionID(in.Token)
+	}
 	if err != nil {
-		return CheckInResult{}, badQR
+		return CheckInResult{}, errBadQR
 	}
 	var lat, lon *float64
 	if in.GPS != nil {
@@ -65,69 +203,69 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 		}
 		lat, lon = &in.GPS.Lat, &in.GPS.Lon
 	}
-
-	var (
-		orgID                    uuid.UUID
-		orgName, title, status   string
-		mode                     string
-		endsAt                   time.Time
-		secret                   []byte
-		radius, maxAcc, rotation int
-		hasAnchor                bool
-		anchorAcc                float64
-		dist                     *float64
-	)
-	err = s.pool.QueryRow(ctx, `SELECT s.org_id, o.name, s.title, s.status::text, s.ends_at, s.qr_secret,
-		s.verification_mode::text, s.gps_radius_m, s.max_gps_accuracy_m, s.qr_rotation_s,
-		s.anchor IS NOT NULL, COALESCE(s.anchor_accuracy_m,0)::float8,
-		CASE WHEN s.anchor IS NOT NULL AND $2::float8 IS NOT NULL
-		     THEN ST_Distance(s.anchor, ST_SetSRID(ST_MakePoint($3::float8,$2::float8),4326)::geography) END
-		FROM attendance_sessions s JOIN organizations o ON o.id=s.org_id WHERE s.id=$1`, sid, lat, lon).
-		Scan(&orgID, &orgName, &title, &status, &endsAt, &secret, &mode, &radius, &maxAcc, &rotation, &hasAnchor, &anchorAcc, &dist)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CheckInResult{}, badQR // same answer as a forged token: no session enumeration
-	}
+	c, err := s.loadCheckinSession(ctx, sid, lat, lon)
 	if err != nil {
 		return CheckInResult{}, err
 	}
-
-	if err := qr.Verify(secret, sid, in.Token, now, time.Duration(rotation)*time.Second, s.opt.QRGraceSlots); err != nil {
-		if errors.Is(err, qr.ErrExpired) {
-			return CheckInResult{}, newErr(410, "qr_expired", "This QR code has expired. Scan the code currently on the screen.")
+	if in.Ticket != "" {
+		if err := qr.VerifyTicket(c.secret, sid, u.ID, in.Ticket, now); err != nil {
+			if errors.Is(err, qr.ErrExpired) {
+				return CheckInResult{}, newErr(410, "ticket_expired", "That took too long. Scan the code on the screen again.")
+			}
+			return CheckInResult{}, errBadQR
 		}
-		return CheckInResult{}, badQR
+	} else if err := s.verifyQR(c, in.Token, now); err != nil {
+		return CheckInResult{}, err
 	}
-	// Server-authoritative end. The small grace covers a request that started
-	// scanning just before expiry; it is not a client-controlled value.
-	if status != "active" || now.After(endsAt.Add(s.opt.CheckinGrace)) {
-		return CheckInResult{}, newErr(410, "session_ended", "This attendance session has ended.")
+	if err := s.stillOpen(c, now); err != nil {
+		return CheckInResult{}, err
 	}
 
-	gps := attendance.GPSReading{}
-	if in.GPS != nil && dist != nil {
-		gps = attendance.GPSReading{
-			Present:   true,
-			DistanceM: *dist,
-			// the organizer anchor is itself uncertain; widen so we never reject on its error
-			AccuracyM: in.GPS.AccuracyM + anchorAcc,
-			AgeS:      math.Max(0, float64(in.GPS.FixAgeMs)/1000),
+	// Evidence is only gathered, and only stored, for modes that check it.
+	// Normal mode ignores whatever location or photo a client may still send.
+	var gps attendance.GPSReading
+	var visualMatched, visualAvailable bool
+	ev := map[string]any{"mode": string(c.mode), "qr": "valid"}
+	if c.mode.Checked() {
+		if in.GPS != nil && c.dist != nil {
+			gps = attendance.GPSReading{
+				Present:   true,
+				DistanceM: *c.dist,
+				// the organizer anchor is itself uncertain; widen so we never reject on its error
+				AccuracyM: in.GPS.AccuracyM + c.anchorAcc,
+				AgeS:      math.Max(0, float64(in.GPS.FixAgeMs)/1000),
+			}
+			// Privacy: store the derived distance and accuracy, never raw coordinates.
+			ev["gps"] = map[string]any{"distance_m": round1(gps.DistanceM), "accuracy_m": round1(gps.AccuracyM), "fix_age_s": round1(gps.AgeS)}
+		}
+		if c.venueID != nil {
+			refs, err := s.venueFingerprints(ctx, c.orgID, *c.venueID)
+			if err != nil {
+				return CheckInResult{}, err
+			}
+			visualAvailable = len(refs) > 0
+			if visualAvailable && len(in.Photo) > 0 {
+				fp, err := vision.Fingerprint(in.Photo)
+				if err != nil {
+					return CheckInResult{}, photoError(err) // 400: the client can retake the photo
+				}
+				d := vision.Best(refs, fp)
+				visualMatched = d >= 0 && d <= vision.MatchMaxDistance
+				// Privacy: the photo is discarded; only the similarity is kept.
+				ev["visual"] = map[string]any{"distance": d, "matched": visualMatched}
+			}
 		}
 	}
+
 	dec := attendance.Decide(attendance.Policy{
-		Mode:         attendance.Mode(mode),
-		RadiusM:      float64(radius),
-		MaxAccuracyM: float64(maxAcc),
-		MaxFixAgeS:   s.opt.MaxFixAge.Seconds(),
-		HasAnchor:    hasAnchor,
-		// VisualAvailable stays false until the visual module exists: in visual
-		// and strict modes every attempt is honestly routed to review.
-	}, gps, false)
-
-	// Privacy: store the derived distance and accuracy, never raw coordinates.
-	ev := map[string]any{"mode": mode, "qr": "valid", "reasons": dec.Reasons}
-	if gps.Present {
-		ev["gps"] = map[string]any{"distance_m": round1(gps.DistanceM), "accuracy_m": round1(gps.AccuracyM), "fix_age_s": round1(gps.AgeS)}
-	}
+		Mode:            c.mode,
+		RadiusM:         float64(c.radius),
+		MaxAccuracyM:    float64(c.maxAcc),
+		MaxFixAgeS:      s.opt.MaxFixAge.Seconds(),
+		HasAnchor:       c.hasAnchor,
+		VisualAvailable: visualAvailable,
+	}, gps, visualMatched)
+	ev["reasons"] = dec.Reasons
 	evJSON, _ := json.Marshal(ev)
 
 	tx, err := s.pool.Begin(ctx)
@@ -137,26 +275,28 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `INSERT INTO verification_attempts(org_id, session_id, user_id, outcome, reasons, evidence)
-		VALUES($1,$2,$3,$4,$5,$6)`, orgID, sid, u.ID, string(dec.Status), dec.Reasons, evJSON); err != nil {
+		VALUES($1,$2,$3,$4,$5,$6)`, c.orgID, sid, u.ID, string(dec.Status), dec.Reasons, evJSON); err != nil {
 		return CheckInResult{}, err
 	}
-	res := CheckInResult{Status: string(dec.Status), Reasons: dec.Reasons, SessionTitle: title, OrganizationName: orgName}
+	res := CheckInResult{Status: string(dec.Status), Mode: string(c.mode), Reasons: dec.Reasons, SessionTitle: c.title, OrganizationName: c.orgName}
 	if dec.Status == attendance.StatusRejected {
 		return res, tx.Commit(ctx)
 	}
 
-	// A verified retry may upgrade a needs_review record; nothing else is ever
-	// overwritten, so organizer decisions (rejected/revoked) stand.
+	// While a record is still in review, a new attempt replaces it: a verified
+	// one upgrades it, a needs_review one refreshes the evidence so the reviewer
+	// sees the latest reasons. Nothing else is ever overwritten, so verified
+	// records and organizer decisions (rejected/revoked) stand.
 	var id uuid.UUID
 	var stored string
 	var inserted bool
 	err = tx.QueryRow(ctx, `INSERT INTO attendance_records
 		(org_id, session_id, user_id, status, method, full_name_snapshot, email_snapshot, phone_snapshot, evidence, checked_in_at, updated_at)
 		VALUES($1,$2,$3,$4::attendance_status,'qr',$5,$6,$7,$8,$9,$9)
-		ON CONFLICT (session_id, user_id) DO UPDATE SET status='verified', evidence=EXCLUDED.evidence, updated_at=EXCLUDED.updated_at
-		  WHERE attendance_records.status='needs_review' AND EXCLUDED.status='verified'
+		ON CONFLICT (session_id, user_id) DO UPDATE SET status=EXCLUDED.status, evidence=EXCLUDED.evidence, updated_at=EXCLUDED.updated_at
+		  WHERE attendance_records.status='needs_review'
 		RETURNING id, status::text, (xmax = 0)`,
-		orgID, sid, u.ID, string(dec.Status), u.FullName, u.Email, u.Phone, evJSON, now).Scan(&id, &stored, &inserted)
+		c.orgID, sid, u.ID, string(dec.Status), u.FullName, u.Email, u.Phone, evJSON, now).Scan(&id, &stored, &inserted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `SELECT id, status::text FROM attendance_records WHERE session_id=$1 AND user_id=$2`, sid, u.ID).Scan(&id, &stored)
 		inserted = false

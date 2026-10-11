@@ -93,3 +93,74 @@ func Verify(secret []byte, sessionID uuid.UUID, token string, now time.Time, rot
 	}
 	return nil
 }
+
+// ---- check-in tickets -------------------------------------------------------
+//
+// With a 5-second rotation a person cannot always finish a multi-step check-in
+// (location, camera) before the code they scanned expires. So the QR is checked
+// once, at scan time, and the server hands back a ticket: a short-lived token
+// bound to this session AND this user, proving "this user presented a fresh
+// code a moment ago". Only a fresh scan can mint a ticket, so a ticket extends
+// nothing for someone who never saw the screen.
+
+const (
+	ticketLen    = 16 + 16 + 8 + macLen
+	ticketDomain = "iah-ticket-v1"
+)
+
+// TicketTTL is how long after a fresh scan the remaining steps may be completed.
+const TicketTTL = 120 * time.Second
+
+func ticketMAC(secret []byte, sessionID, userID uuid.UUID, exp uint64) []byte {
+	h := hmac.New(sha256.New, secret)
+	h.Write([]byte(ticketDomain))
+	h.Write(sessionID[:])
+	h.Write(userID[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], exp)
+	h.Write(b[:])
+	return h.Sum(nil)[:macLen]
+}
+
+// SignTicket issues a ticket for (session, user) valid until now+TicketTTL.
+func SignTicket(secret []byte, sessionID, userID uuid.UUID, now time.Time) string {
+	exp := uint64(now.Add(TicketTTL).Unix())
+	buf := make([]byte, 0, ticketLen)
+	buf = append(buf, sessionID[:]...)
+	buf = append(buf, userID[:]...)
+	buf = binary.BigEndian.AppendUint64(buf, exp)
+	buf = append(buf, ticketMAC(secret, sessionID, userID, exp)...)
+	return base64.RawURLEncoding.EncodeToString(buf)
+}
+
+// TicketSessionID extracts the (unauthenticated) session id so the caller can
+// load the session secret; confirm with VerifyTicket.
+func TicketSessionID(ticket string) (uuid.UUID, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(ticket)
+	if err != nil || len(raw) != ticketLen {
+		return uuid.Nil, ErrMalformed
+	}
+	var id uuid.UUID
+	copy(id[:], raw[:16])
+	return id, nil
+}
+
+// VerifyTicket checks the MAC in constant time, that the ticket belongs to this
+// session and user, and that it has not expired.
+func VerifyTicket(secret []byte, sessionID, userID uuid.UUID, ticket string, now time.Time) error {
+	raw, err := base64.RawURLEncoding.DecodeString(ticket)
+	if err != nil || len(raw) != ticketLen {
+		return ErrMalformed
+	}
+	var sid, uid uuid.UUID
+	copy(sid[:], raw[:16])
+	copy(uid[:], raw[16:32])
+	exp := binary.BigEndian.Uint64(raw[32:40])
+	if sid != sessionID || uid != userID || !hmac.Equal(raw[40:], ticketMAC(secret, sessionID, userID, exp)) {
+		return ErrBadMAC
+	}
+	if uint64(now.Unix()) > exp {
+		return ErrExpired
+	}
+	return nil
+}

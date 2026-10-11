@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="I Am Here">
+  <rect width="64" height="64" rx="16" fill="#4338ca"/>
+  <path d="M32 12c-8.3 0-15 6.5-15 14.6 0 10.4 12.3 21.2 14 22.6a1.5 1.5 0 0 0 2 0c1.7-1.4 14-12.2 14-22.6C47 18.500 40.300 12 32 12Z" fill="#fff"/>
+  <path d="m25.500 26.500 4.800 4.800 8.700-9" fill="none" stroke="#4338ca" stroke-width="4.200" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

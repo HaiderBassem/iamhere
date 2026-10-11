@@ -1,0 +1,50 @@
+/* THEME: every color, font and shape of the app comes from these variables.
+   To re-skin, change the values below (and brand.js / assets/logo.svg). */
+:root {
+  /* brand */
+  --brand: #4338ca;          /* primary buttons, links, active tab */
+  --brand-strong: #3730a3;   /* hover / pressed */
+  --brand-ink: #ffffff;      /* text on --brand */
+  --brand-soft: #eef0ff;     /* tinted backgrounds */
+  --accent: #14b8a6;         /* highlights */
+
+  /* surfaces and text */
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-2: #f0f2f8;
+  --line: #e3e6f0;
+  --text: #151a2d;
+  --muted: #5d6580;
+
+  /* status */
+  --ok: #0f9d6b;      --ok-soft: #e1f7ee;
+  --warn: #b7791f;    --warn-soft: #fdf3dc;
+  --bad: #d23b4f;     --bad-soft: #fde8eb;
+
+  /* shape and type */
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow: 0 1px 2px rgb(21 26 45 / .06), 0 8px 24px rgb(21 26 45 / .06);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Naskh Arabic", "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand: #8b86ff;
+    --brand-strong: #a7a3ff;
+    --brand-ink: #11132a;
+    --brand-soft: #22254d;
+    --accent: #2dd4bf;
+    --bg: #0e1020;
+    --surface: #171a30;
+    --surface-2: #20243f;
+    --line: #2b3050;
+    --text: #eceefb;
+    --muted: #9aa1c4;
+    --ok: #3ddc9f;   --ok-soft: #12382b;
+    --warn: #f0b94f; --warn-soft: #3b2f12;
+    --bad: #ff7084;  --bad-soft: #3d1a22;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px rgb(0 0 0 / .35);
+  }
+}

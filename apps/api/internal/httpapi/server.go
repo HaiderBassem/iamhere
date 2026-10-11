@@ -36,9 +36,26 @@ type Server struct {
 	sseEvery time.Duration
 }
 
-// New builds the HTTP handler. corsOrigins lists exact browser origins that may
-// call the API cross-origin (empty = same-origin only).
-func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(context.Context) error, corsOrigins ...string) http.Handler {
+// PublicConfig is what the web app needs before the user is signed in.
+type PublicConfig struct {
+	Auth     string `json:"auth"` // "oidc" | "dev"
+	Issuer   string `json:"issuer,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
+}
+
+// Options are the optional parts of the HTTP layer.
+type Options struct {
+	// CORSOrigins lists exact browser origins that may call the API cross-origin
+	// (empty = same-origin only).
+	CORSOrigins []string
+	Public      PublicConfig
+	// WebDir, when set, serves the web app from this directory (development and
+	// single-binary setups). In production Caddy serves it instead.
+	WebDir string
+}
+
+// New builds the HTTP handler.
+func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(context.Context) error, opt Options) http.Handler {
 	s := &Server{
 		svc: svc, ver: ver, log: log, ready: ready,
 		checkins: newLimiterSet(rate.Every(3*time.Second), 10), // ~20/min sustained, burst 10
@@ -47,7 +64,7 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 		sseEvery: 2 * time.Second,
 	}
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, s.recoverer, s.accessLog, secureHeaders, cors(corsOrigins))
+	r.Use(middleware.RequestID, s.recoverer, s.accessLog, secureHeaders, cors(opt.CORSOrigins))
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -59,48 +76,60 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 	})
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(s.authenticate)
-
-		// The streaming endpoint is registered outside the request-timeout group.
-		r.Get("/orgs/{org}/sessions/{sid}/events", s.h(s.events))
+		r.Get("/public-config", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, opt.Public) })
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Timeout(20 * time.Second))
+			r.Use(s.authenticate)
 
-			r.Get("/me", s.h(s.getMe))
-			r.Patch("/me", s.h(s.patchMe))
-			r.Delete("/me", s.h(s.deleteMe))
-			r.Get("/me/attendance", s.h(s.myHistory))
-			r.Post("/checkins", s.h(s.checkIn))
-			r.Post("/invites/accept", s.h(s.acceptInvite))
+			// The streaming endpoint is registered outside the request-timeout group.
+			r.Get("/orgs/{org}/sessions/{sid}/events", s.h(s.events))
 
-			r.Get("/orgs", s.h(s.listOrgs))
-			r.Post("/orgs", s.h(s.createOrg))
-			r.Route("/orgs/{org}", func(r chi.Router) {
-				r.Get("/settings", s.h(s.getSettings))
-				r.Put("/settings", s.h(s.putSettings))
-				r.Get("/members", s.h(s.listMembers))
-				r.Put("/members/{uid}", s.h(s.setMember))
-				r.Delete("/members/{uid}", s.h(s.removeMember))
-				r.Get("/invites", s.h(s.listInvites))
-				r.Post("/invites", s.h(s.createInvite))
-				r.Delete("/invites/{iid}", s.h(s.revokeInvite))
-				r.Get("/venues", s.h(s.listVenues))
-				r.Post("/venues", s.h(s.createVenue))
-				r.Delete("/venues/{vid}", s.h(s.deleteVenue))
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.Timeout(20 * time.Second))
 
-				r.Get("/sessions", s.h(s.listSessions))
-				r.Post("/sessions", s.h(s.createSession))
-				r.Get("/sessions/{sid}", s.h(s.getSession))
-				r.Get("/sessions/{sid}/qr", s.h(s.sessionQR))
-				r.Post("/sessions/{sid}/close", s.h(s.closeSession))
-				r.Get("/sessions/{sid}/attendance", s.h(s.listAttendance))
-				r.Get("/sessions/{sid}/attendance.csv", s.h(s.exportCSV))
-				r.Post("/sessions/{sid}/attendance/manual", s.h(s.manual))
-				r.Post("/attendance/{rid}/review", s.h(s.review))
+				r.Get("/me", s.h(s.getMe))
+				r.Patch("/me", s.h(s.patchMe))
+				r.Delete("/me", s.h(s.deleteMe))
+				r.Get("/me/attendance", s.h(s.myHistory))
+				r.Post("/checkins/scan", s.h(s.scan))
+				r.Post("/checkins", s.h(s.checkIn))
+				r.Post("/invites/accept", s.h(s.acceptInvite))
+
+				r.Get("/orgs", s.h(s.listOrgs))
+				r.Post("/orgs", s.h(s.createOrg))
+				r.Route("/orgs/{org}", func(r chi.Router) {
+					r.Get("/settings", s.h(s.getSettings))
+					r.Put("/settings", s.h(s.putSettings))
+					r.Get("/members", s.h(s.listMembers))
+					r.Put("/members/{uid}", s.h(s.setMember))
+					r.Delete("/members/{uid}", s.h(s.removeMember))
+					r.Get("/invites", s.h(s.listInvites))
+					r.Post("/invites", s.h(s.createInvite))
+					r.Delete("/invites/{iid}", s.h(s.revokeInvite))
+					r.Get("/venues", s.h(s.listVenues))
+					r.Post("/venues", s.h(s.createVenue))
+					r.Delete("/venues/{vid}", s.h(s.deleteVenue))
+					r.Get("/venues/{vid}/references", s.h(s.listReferences))
+					r.Post("/venues/{vid}/references", s.h(s.addReference))
+					r.Delete("/venues/{vid}/references/{rid}", s.h(s.deleteReference))
+
+					r.Get("/sessions", s.h(s.listSessions))
+					r.Post("/sessions", s.h(s.createSession))
+					r.Get("/sessions/{sid}", s.h(s.getSession))
+					r.Get("/sessions/{sid}/qr", s.h(s.sessionQR))
+					r.Post("/sessions/{sid}/close", s.h(s.closeSession))
+					r.Get("/sessions/{sid}/attendance", s.h(s.listAttendance))
+					r.Get("/sessions/{sid}/attendance.csv", s.h(s.exportCSV))
+					r.Post("/sessions/{sid}/attendance/manual", s.h(s.manual))
+					r.Post("/attendance/{rid}/review", s.h(s.review))
+				})
 			})
 		})
 	})
+
+	if opt.WebDir != "" {
+		r.NotFound(webApp(opt.WebDir, cspFor(opt.Public.Issuer)))
+	}
 	return r
 }
 
@@ -298,8 +327,17 @@ func (s *Server) h(fn handler) http.HandlerFunc {
 	}
 }
 
+const (
+	maxJSONBody  = 64 << 10
+	maxPhotoBody = 1 << 20 // a photo travels as base64 inside JSON
+)
+
 func decode(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	return decodeMax(w, r, dst, maxJSONBody)
+}
+
+func decodeMax(w http.ResponseWriter, r *http.Request, dst any, max int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, max)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil || dec.More() {
@@ -393,19 +431,59 @@ func (s *Server) myHistory(w http.ResponseWriter, r *http.Request, u app.User) e
 
 // ---- handlers: check-in ---------------------------------------------------
 
+// decodePhoto accepts raw base64 or a data: URL, as produced by canvas.toDataURL.
+func decodePhoto(v string) ([]byte, error) {
+	if v == "" {
+		return nil, nil
+	}
+	if k := strings.Index(v, ","); strings.HasPrefix(v, "data:") && k > 0 {
+		v = v[k+1:]
+	}
+	b, err := base64.StdEncoding.DecodeString(v)
+	if err != nil {
+		return nil, app.BadRequest("Malformed photo.")
+	}
+	return b, nil
+}
+
+func (s *Server) scan(w http.ResponseWriter, r *http.Request, u app.User) error {
+	if !s.checkins.allow(u.ID) {
+		w.Header().Set("Retry-After", "5")
+		return app.TooMany()
+	}
+	var in struct {
+		Token string `json:"token"`
+	}
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	res, err := s.svc.Scan(r.Context(), u, in.Token)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, res)
+	return nil
+}
+
 func (s *Server) checkIn(w http.ResponseWriter, r *http.Request, u app.User) error {
 	if !s.checkins.allow(u.ID) {
 		w.Header().Set("Retry-After", "5")
 		return app.TooMany()
 	}
 	var in struct {
-		Token string        `json:"token"`
-		GPS   *app.GPSInput `json:"gps"`
+		Token  string        `json:"token"`
+		Ticket string        `json:"ticket"`
+		GPS    *app.GPSInput `json:"gps"`
+		Photo  string        `json:"photo"`
 	}
-	if err := decode(w, r, &in); err != nil {
+	if err := decodeMax(w, r, &in, maxPhotoBody); err != nil {
 		return err
 	}
-	res, err := s.svc.CheckIn(r.Context(), u, app.CheckInInput{Token: in.Token, GPS: in.GPS})
+	photo, err := decodePhoto(in.Photo)
+	if err != nil {
+		return err
+	}
+	res, err := s.svc.CheckIn(r.Context(), u, app.CheckInInput{Token: in.Token, Ticket: in.Ticket, GPS: in.GPS, Photo: photo})
 	if err != nil {
 		return err
 	}
@@ -656,6 +734,70 @@ func (s *Server) deleteVenue(w http.ResponseWriter, r *http.Request, u app.User)
 	return nil
 }
 
+func venueParams(r *http.Request) (uuid.UUID, uuid.UUID, error) {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	vid, err := uuidParam(r, "vid")
+	return org, vid, err
+}
+
+func (s *Server) addReference(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	if !s.creates.allow(u.ID) {
+		return app.TooMany()
+	}
+	var in struct {
+		Photo string `json:"photo"`
+	}
+	if err := decodeMax(w, r, &in, maxPhotoBody); err != nil {
+		return err
+	}
+	photo, err := decodePhoto(in.Photo)
+	if err != nil {
+		return err
+	}
+	ref, err := s.svc.AddVenueReference(r.Context(), u, org, vid, photo)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 201, ref)
+	return nil
+}
+
+func (s *Server) listReferences(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	items, err := s.svc.ListVenueReferences(r.Context(), u, org, vid)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+	return nil
+}
+
+func (s *Server) deleteReference(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	rid, err := uuidParam(r, "rid")
+	if err != nil {
+		return err
+	}
+	if err := s.svc.DeleteVenueReference(r.Context(), u, org, vid, rid); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 // ---- handlers: sessions ---------------------------------------------------
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request, u app.User) error {
@@ -671,12 +813,13 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, u app.Use
 		Anchor    *app.Anchor `json:"anchor"`
 		VenueID   *uuid.UUID  `json:"venue_id"`
 		DurationS int         `json:"duration_s"`
+		Mode      string      `json:"mode"`
 	}
 	if err := decode(w, r, &in); err != nil {
 		return err
 	}
 	sess, err := s.svc.CreateSession(r.Context(), u, org, app.CreateSessionInput{
-		Title: in.Title, Anchor: in.Anchor, VenueID: in.VenueID, DurationS: in.DurationS, IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		Title: in.Title, Anchor: in.Anchor, VenueID: in.VenueID, DurationS: in.DurationS, Mode: in.Mode, IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
 		return err
