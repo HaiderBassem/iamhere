@@ -203,7 +203,7 @@ func newFakeVision(t *testing.T) *fakeVision {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Image, Probe string
-			Refs         []struct{ SHA256, Image string }
+			Refs         []struct{ SHA256 string }
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		mu.Lock()
@@ -218,9 +218,6 @@ func newFakeVision(t *testing.T) *fakeVision {
 		case "/v1/verify":
 			var missing []string
 			for _, ref := range in.Refs {
-				if ref.Image != "" {
-					cached[ref.SHA256] = true
-				}
 				if !cached[ref.SHA256] {
 					missing = append(missing, ref.SHA256)
 				}

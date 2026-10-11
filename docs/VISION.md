@@ -94,10 +94,11 @@ python -m pytest -q                      # QR reading, rooms, masking, quality g
 python -m iahvision.server               # listens on :8090 (IAH_VISION_LISTEN)
 ```
 
-Protocol: `POST /v1/reference {image}` validates a reference (light, sharpness, detail) and caches its features;
-`POST /v1/verify {probe, hint?, refs:[{sha256, image?}]}` answers 409 with the hashes it has no features for (first
-use or after a restart) and the API resends those images once. Features are cached by image hash (LRU,
-`IAH_VISION_CACHE`, default 256).
+Protocol: `POST /v1/reference {image}` validates a reference (light, sharpness, detail) and caches its features
+(even when it complains about them); `POST /v1/verify {probe, hint?, refs:[{sha256}]}` answers 409 with the
+hashes it has no features for (first use, or after a restart). The API then uploads each missing reference to
+`/v1/reference`, one at a time and shared between check-ins that need the same one, and asks again. Features
+are cached by image hash (LRU, `IAH_VISION_CACHE`, default 256).
 
 ## Data kept
 

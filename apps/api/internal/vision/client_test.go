@@ -8,14 +8,18 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// fakeService imitates apps/vision: it only knows reference hashes it has been
-// sent an image for, and answers 409 with the missing ones otherwise.
+// fakeService imitates apps/vision: it only knows references it has been sent
+// to /v1/reference (even ones it complained about), and answers /v1/verify with
+// 409 and the missing hashes otherwise.
 func fakeService(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	var mu sync.Mutex
 	known := map[string]bool{}
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,12 +27,17 @@ func fakeService(t *testing.T) (*httptest.Server, *atomic.Int32) {
 		var in struct {
 			Probe string `json:"probe"`
 			Image string `json:"image"`
-			Refs  []struct{ SHA256, Image string }
+			Refs  []map[string]string
 		}
 		json.NewDecoder(r.Body).Decode(&in)
+		mu.Lock()
+		defer mu.Unlock()
 		switch r.URL.Path {
 		case "/v1/reference":
-			if b, _ := base64.StdEncoding.DecodeString(in.Image); string(b) == "blurry" {
+			b, _ := base64.StdEncoding.DecodeString(in.Image)
+			h := SHA256(b)
+			known[hex.EncodeToString(h[:])] = true
+			if string(b) == "blurry" {
 				w.WriteHeader(422)
 				json.NewEncoder(w).Encode(map[string]any{"error": "photo_unusable", "message": "The photo is blurry.", "codes": []string{"blurry"}})
 				return
@@ -42,15 +51,11 @@ func fakeService(t *testing.T) (*httptest.Server, *atomic.Int32) {
 			}
 			var missing []string
 			for _, ref := range in.Refs {
-				if ref.Image != "" {
-					img, _ := base64.StdEncoding.DecodeString(ref.Image)
-					if h := SHA256(img); hex.EncodeToString(h[:]) != ref.SHA256 {
-						t.Errorf("image does not match its hash")
-					}
-					known[ref.SHA256] = true
+				if len(ref) != 1 {
+					t.Errorf("verify must carry hashes only: %v", ref)
 				}
-				if !known[ref.SHA256] {
-					missing = append(missing, ref.SHA256)
+				if !known[ref["sha256"]] {
+					missing = append(missing, ref["sha256"])
 				}
 			}
 			if len(missing) > 0 {
@@ -73,21 +78,52 @@ func TestVerifySendsImagesOnlyWhenAsked(t *testing.T) {
 	srv, calls := fakeService(t)
 	c := New(srv.URL)
 	var loads atomic.Int32
-	refs := []Ref{ref("room-a", &loads), ref("room-b", &loads)}
+	refs := []Ref{ref("room-a", &loads), ref("room-b", &loads), ref("blurry", &loads)}
 
 	res, err := c.Verify(context.Background(), []byte("probe"), nil, refs)
 	if err != nil || !res.Matched || res.Codes[0] != "code" {
 		t.Fatalf("%+v %v", res, err)
 	}
-	if loads.Load() != 2 || calls.Load() != 2 {
-		t.Fatalf("first use: want 2 image loads in 2 calls, got %d loads, %d calls", loads.Load(), calls.Load())
+	// verify (409), one upload per missing reference, verify again
+	if loads.Load() != 3 || calls.Load() != 5 {
+		t.Fatalf("first use: want 3 image loads in 5 calls, got %d loads, %d calls", loads.Load(), calls.Load())
 	}
 	// now cached by the service: one call, no image loads
 	if _, err := c.Verify(context.Background(), []byte("probe"), nil, refs); err != nil {
 		t.Fatal(err)
 	}
-	if loads.Load() != 2 || calls.Load() != 3 {
+	if loads.Load() != 3 || calls.Load() != 6 {
 		t.Fatalf("cached: want no extra loads, got %d loads, %d calls", loads.Load(), calls.Load())
+	}
+}
+
+// After a restart a whole class may check in at once: each missing reference is
+// uploaded about once, not once per check-in.
+func TestConcurrentCheckinsShareUploads(t *testing.T) {
+	srv, _ := fakeService(t)
+	c := New(srv.URL)
+	var loads atomic.Int32
+	release := make(chan struct{})
+	slow := Ref{SHA256: SHA256([]byte("room-a")), Load: func(context.Context) ([]byte, error) {
+		loads.Add(1)
+		<-release
+		return []byte("room-a"), nil
+	}}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Verify(context.Background(), []byte("probe"), nil, []Ref{slow}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	time.Sleep(200 * time.Millisecond) // let them all reach the upload
+	close(release)
+	wg.Wait()
+	if n := loads.Load(); n > 2 {
+		t.Fatalf("want the reference loaded about once, got %d", n)
 	}
 }
 

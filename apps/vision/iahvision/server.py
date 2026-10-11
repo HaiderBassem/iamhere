@@ -3,7 +3,8 @@
 POST /v1/reference {image}                    -> 200 {width,height,keypoints} | 422 {codes,message}
 POST /v1/verify {probe, hint?, refs:[{sha256, image?}]}
                                               -> 200 {codes, matched, score, refs, model}
-                                               | 409 {missing:[sha256]}  (send those images again)
+                                               | 409 {missing:[sha256]}  (POST those to /v1/reference, or
+                                                                          inline as image, then ask again)
                                                | 422 {codes, message}    (retake the photo)
 GET  /healthz                                 -> 200
 
@@ -97,11 +98,14 @@ class Service:
         img, raw = decode_image(body.get("image", ""))
         with self.slots:
             feats = self.reference_features(img, raw)
+        # cached even when it is criticised below: the API also uses this to
+        # re-send references it already stores (after a restart), whatever the
+        # quality gate says today
+        self.cache.put(hashlib.sha256(raw).hexdigest(), feats)
         probs = quality.problems(img, feats.count)
         if probs:
             raise HTTPError(422, {"error": "photo_unusable", "codes": probs,
                                   "message": " ".join(quality.MESSAGES[p] for p in probs)})
-        self.cache.put(hashlib.sha256(raw).hexdigest(), feats)
         return {"width": int(img.shape[1]), "height": int(img.shape[0]), "keypoints": int(feats.count)}
 
     def verify(self, body: dict) -> dict:
@@ -170,6 +174,7 @@ def make_handler(svc: Service):
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 if n <= 0 or n > MAX_BODY:
+                    self.close_connection = True   # the unread body must not be taken for the next request
                     raise HTTPError(413, {"error": "too_large", "message": "Request too large."})
                 body = json.loads(self.rfile.read(n))
                 if not isinstance(body, dict):

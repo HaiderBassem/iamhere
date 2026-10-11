@@ -1,6 +1,6 @@
 import { h, mount, icon, fmtTime, loadScript } from '../ui.js';
 import { post } from '../api.js';
-import { getPosition, openCamera, captureJPEG, watchForCode, takePendingCapture, reasonText } from '../lib.js';
+import { getPosition, openCamera, captureJPEG, watchForCode, takePendingCapture, reasonText, tokenFrom, sameSession } from '../lib.js';
 
 export default async function checkin({ page, params: [token], navigate, onCleanup, setTitle, stale }) {
   setTitle('Check in');
@@ -25,7 +25,6 @@ export default async function checkin({ page, params: [token], navigate, onClean
   const evidence = {};
   const scanned = takePendingCapture(token);      // the in-app scanner already took it
   if (scanned && need.photo) { evidence.photo = scanned.photo; evidence.hint = scanned.hint; need.photo = false; }
-  if (!need.gps && !need.photo) return submit(evidence);
   const steps = [need.gps && 'gps', need.photo && 'photo'].filter(Boolean);
   const stepsList = (current) => h('div', { class: 'steps' }, steps.map((s, i) => {
     const done = steps.indexOf(current) > i;
@@ -42,6 +41,8 @@ export default async function checkin({ page, params: [token], navigate, onClean
     if (nxt === 'photo') return photoStep();
     return submit(evidence);
   };
+  // everything above is declared before this, so a retake (below) works in every path
+  if (!need.gps && !need.photo) return submit(evidence);
 
   function locationStep(error) {
     const btn = h('button', { class: 'btn big', type: 'button' }, icon('pin'), 'Share my location');
@@ -77,7 +78,8 @@ export default async function checkin({ page, params: [token], navigate, onClean
       try { evidence.photo = captureJPEG(video).dataURL; } catch (err) { return photoFailed(err.message); }
       clearTimeout(reveal); stopCam(); stopCam = () => {}; next('photo');
     });
-    watch = watchForCode(video, { accept: (text) => text.includes('#/c/') });
+    // only this session's code proves anything (another session's screen may be in view)
+    watch = watchForCode(video, { accept: (text) => sameSession(tokenFrom(text), token) });
     const found = await watch.promise;
     clearTimeout(reveal);
     if (stale() || !video.isConnected || !found) return;
@@ -125,12 +127,25 @@ export default async function checkin({ page, params: [token], navigate, onClean
       h('p', { class: 'muted' }, [scan.session_title, ' · ', scan.organization_name]),
       why && h('div', { class: 'banner' }, why),
       r.status === 'needs_review' && h('p', { class: 'muted small' }, 'You do not need to do anything else. They can approve you from their screen.'),
+      retakeable(r, fromScan) && h('button', { class: 'btn secondary big', type: 'button', onClick: retake }, icon('camera'), 'Take the photo again'),
       r.status === 'rejected' && !fromScan && h('p', { class: 'muted small' }, 'If you are in the room, move closer to the organizer and scan again.'),
       fromScan && (r.status === 'rejected' || r.status === 'revoked') && h('p', { class: 'muted small' }, 'If this is a mistake, talk to your organizer.'),
       h('p', { class: 'small muted' }, fmtTime(new Date())),
       h('div', { class: 'stack-sm', style: 'inline-size:100%;max-inline-size:360px' },
         h('a', { class: 'btn big', href: '#/' }, 'Done'),
         r.status === 'rejected' && !fromScan && h('a', { class: 'btn secondary big', href: '#/scan' }, 'Scan again'))));
+  }
+
+  // A photo that did not match the room or missed the code can be retaken at
+  // once (the ticket from the scan is still good for a couple of minutes).
+  function retakeable(r, fromScan) {
+    return r.status === 'needs_review' && scan.needs_photo && !fromScan
+      && (r.reasons || []).some((c) => c === 'visual_check_required' || c === 'photo_without_current_code');
+  }
+  function retake() {
+    delete evidence.photo; delete evidence.hint;
+    if (!steps.includes('photo')) steps.push('photo');
+    photoStep();
   }
 
   function problem(err) {

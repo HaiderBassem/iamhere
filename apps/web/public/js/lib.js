@@ -95,23 +95,6 @@ export async function openCamera(video, facing = 'environment', { hd = false } =
   return () => stream.getTracks().forEach((t) => t.stop());
 }
 
-/**
- * Captures the current frame as a small JPEG data URL, center-cropped to 4:3 so
- * every photo (reference and live) has the same framing. Photos are only ever
- * taken live from the camera, never picked from a gallery.
- */
-export function captureFrame(video, w = 320, h = 240) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw || !vh) throw new Error('The camera is not ready yet.');
-  const target = w / h;
-  let sw = vw, sh = vh;
-  if (vw / vh > target) sw = vh * target; else sh = vw / target;
-  c.getContext('2d').drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, w, h);
-  return c.toDataURL('image/jpeg', 0.72);
-}
-
 /** Draws an image source scaled so its long side is at most maxSide; returns the canvas. */
 function scaled(src, w, h, maxSide) {
   const s = Math.min(1, maxSide / Math.max(w, h));
@@ -143,10 +126,11 @@ export async function fileToJPEG(file, maxSide = 1600, quality = 0.85) {
  * screen; the corners help the server read the code again. Call stop() to give up.
  */
 export function watchForCode(video, { maxSide = 1600, accept = () => true } = {}) {
-  let alive = true, timer;
+  let alive = true, timer, settle;
   const work = document.createElement('canvas');
   const ctx = work.getContext('2d', { willReadFrequently: true });
   const promise = new Promise((resolve) => {
+    settle = resolve;
     const tick = () => {
       if (!alive) return;
       if (video.readyState >= 2 && video.videoWidth && window.jsQR) {
@@ -167,8 +151,18 @@ export function watchForCode(video, { maxSide = 1600, accept = () => true } = {}
     };
     tick();
   });
-  return { promise, stop: () => { alive = false; clearTimeout(timer); } };
+  // stopping resolves with null, so whoever awaits the promise is not left hanging
+  return { promise, stop: () => { alive = false; clearTimeout(timer); settle(null); } };
 }
+
+/** Pulls the check-in token out of a scanned QR: our link, or a bare token. */
+export function tokenFrom(text) {
+  const m = /#\/c\/([A-Za-z0-9_-]{40,80})\s*$/.exec(text) || /^([A-Za-z0-9_-]{40,80})$/.exec(text.trim());
+  return m ? m[1] : null;
+}
+
+/** Whether two check-in tokens belong to the same session (they start with its id). */
+export const sameSession = (a, b) => !!a && !!b && a.slice(0, 21) === b.slice(0, 21);
 
 // A photo taken by the in-app scanner at the moment it read the code, handed to
 // the check-in page so strict mode does not need a second photo.

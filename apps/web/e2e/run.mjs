@@ -279,6 +279,7 @@ try {
   await dan.page.getByRole('button', { name: 'Share my location' }).click();
   await dan.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor({ timeout: 30000 });
   check(await dan.page.getByText(/did not match the room/).isVisible(), 'the code shown in another room -> sent for review, with a plain-language reason');
+  check(await dan.page.getByRole('button', { name: 'Take the photo again' }).isVisible(), 'and is offered to retake the photo');
   await shot(dan, '34-strict-review');
 
   // 3. right room but located far away -> rejected
@@ -306,14 +307,19 @@ try {
   await hal.page.getByRole('button', { name: 'Take photo anyway' }).click({ timeout: 15000 });
   await hal.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor({ timeout: 30000 });
   check(await hal.page.getByText(/did not show the current code/).isVisible(), 'a room photo without the current code -> review, never verified');
+  // ...and can retake it straight away, this time with the code in view
+  camFeed('cam-hal', 1, 5, await readQR(prof.page));
+  await hal.page.getByRole('button', { name: 'Take the photo again' }).click();
+  await hal.page.getByRole('heading', { name: /You’re checked in/ }).waitFor({ timeout: 30000 });
+  check(true, 'retaking the photo from the review screen verifies them');
 
-  // organizer sees the three flagged people and approves one
-  await prof.page.locator('.stat.warn b').filter({ hasText: '3' }).waitFor({ timeout: 8000 });
-  check(true, 'organizer sees 3 to review live');
-  await prof.page.locator('.item', { hasText: 'Dan Elsewhere' }).getByRole('button', { name: 'Approve' }).click();
+  // organizer sees the two flagged people and approves one
   await prof.page.locator('.stat.warn b').filter({ hasText: '2' }).waitFor({ timeout: 8000 });
-  await prof.page.locator('.stat.ok b').filter({ hasText: '2' }).waitFor({ timeout: 8000 });
-  check(true, 'approving moves them to checked in (2 in, 2 to review)');
+  check(true, 'organizer sees 2 to review live');
+  await prof.page.locator('.item', { hasText: 'Dan Elsewhere' }).getByRole('button', { name: 'Approve' }).click();
+  await prof.page.locator('.stat.warn b').filter({ hasText: '1' }).waitFor({ timeout: 8000 });
+  await prof.page.locator('.stat.ok b').filter({ hasText: '3' }).waitFor({ timeout: 8000 });
+  check(true, 'approving moves them to checked in (3 in, 1 to review)');
   await shot(prof, '37-live-strict-review');
   check(!(await prof.page.getByText('Eve Faraway').count()), 'a rejected attempt never becomes an attendance record');
 
@@ -338,8 +344,8 @@ try {
   await gus.page.getByRole('button', { name: 'Share my location' }).click();
   await gus.page.getByRole('heading', { name: /You’re checked in/ }).waitFor({ timeout: 30000 });
   check(true, 'a person in review can retry and is verified by a good attempt');
-  await prof.page.locator('.stat.ok b').filter({ hasText: '3' }).waitFor({ timeout: 8000 });
-  check(true, 'the organizer\'s count follows (3 in)');
+  await prof.page.locator('.stat.ok b').filter({ hasText: '4' }).waitFor({ timeout: 8000 });
+  check(true, 'the organizer\'s count follows (4 in)');
 
   // ---------------------------------------------------------------------------
   section('Team: invite by link');

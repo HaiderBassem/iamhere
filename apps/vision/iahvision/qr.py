@@ -39,18 +39,24 @@ def find_codes(img: np.ndarray, hint: list[list[float]] | None = None) -> list[t
     """Returns (text, corners in image coordinates) for every QR code read."""
     h, w = img.shape[:2]
     if hint is not None:
-        q = np.float32(hint)
+        try:
+            q = np.float32(hint)
+        except (TypeError, ValueError):
+            q = np.zeros(0, np.float32)
         if _valid_quad(q, w, h):
             # rectify a square around the hinted code (with a quiet zone) at ~8 px/module
             S = 512
             pad = 0.18
             dst = np.float32([[S * pad, S * pad], [S * (1 - pad), S * pad], [S * (1 - pad), S * (1 - pad)], [S * pad, S * (1 - pad)]])
-            M = cv2.getPerspectiveTransform(q, dst)
-            crop = cv2.warpPerspective(img, M, (S, S), flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
-            found = _decode(crop)
-            if found:
-                inv = np.linalg.inv(M)
-                return [(t, cv2.perspectiveTransform(c[None], inv)[0]) for t, c in found]
+            try:
+                M = cv2.getPerspectiveTransform(q, dst)
+                crop = cv2.warpPerspective(img, M, (S, S), flags=cv2.INTER_CUBIC, borderValue=(255, 255, 255))
+                found = _decode(crop)
+                if found:
+                    inv = np.linalg.inv(M)
+                    return [(t, cv2.perspectiveTransform(c[None], inv)[0]) for t, c in found]
+            except (cv2.error, np.linalg.LinAlgError):
+                pass    # a twisted or degenerate hint: search the whole photo instead
     return _decode(img)
 
 

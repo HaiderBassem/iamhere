@@ -80,7 +80,10 @@ def test_code_is_read_inside_a_photo():
     hint = (np.float32(corners) * 0.75).tolist()
     assert [t for t, _ in qr.find_codes(small, hint)] == [text]
     assert [t for t, _ in qr.find_codes(small, None)] == [text]
-    assert qr.find_codes(small, [[0, 0], [1, 0], [1, 1], [0, 1]]) or True   # a bad hint never crashes
+    # a useless, twisted or malformed hint falls back to searching the whole photo
+    for bad in ([[0, 0], [1, 0], [1, 1], [0, 1]], [hint[0], hint[2], hint[1], hint[3]], [[1e30, 0]] * 4, [[0, 0]] * 4,
+                [["x", 1]] * 4, [1, 2, 3]):
+        assert [t for t, _ in qr.find_codes(small, bad)] == [text], bad
 
 
 def test_reference_quality_gate(matcher):
@@ -104,8 +107,12 @@ def test_http_protocol(server, matcher):
 
     st, body = post(server, "/v1/reference", {"image": b64(ref)})
     assert st == 200 and body["keypoints"] > 0, body
-    st, body = post(server, "/v1/reference", {"image": b64(jpeg(np.full((960, 1280, 3), 190, np.uint8)))})
+    plain = jpeg(np.full((960, 1280, 3), 190, np.uint8))
+    st, body = post(server, "/v1/reference", {"image": b64(plain)})
     assert st == 422 and "too_little_detail" in body["codes"], body
+    # ...but its features are cached: the API re-sends stored references this way after a restart
+    st, body = post(server, "/v1/verify", {"probe": b64(probe), "refs": [{"sha256": hashlib.sha256(plain).hexdigest()}]})
+    assert st == 200 and body["matched"] is False, body
 
     # unknown reference -> 409 with its hash; then it is accepted with the image
     other = jpeg(view(wall(6), 60, 0.0))
@@ -113,6 +120,14 @@ def test_http_protocol(server, matcher):
     st, body = post(server, "/v1/verify", {"probe": b64(probe), "refs": [{"sha256": osha}]})
     assert st == 409 and body["missing"] == [osha]
     st, body = post(server, "/v1/verify", {"probe": b64(probe), "refs": [{"sha256": osha, "image": b64(other)}]})
+    assert st == 200 and body["matched"] is False
+    # or uploaded on its own first (what the API does)
+    third = jpeg(view(wall(8), 80, 0.0))
+    tsha = hashlib.sha256(third).hexdigest()
+    st, body = post(server, "/v1/verify", {"probe": b64(probe), "refs": [{"sha256": tsha}, {"sha256": osha}]})
+    assert st == 409 and body["missing"] == [tsha]
+    assert post(server, "/v1/reference", {"image": b64(third)})[0] == 200
+    st, body = post(server, "/v1/verify", {"probe": b64(probe), "refs": [{"sha256": tsha}, {"sha256": osha}]})
     assert st == 200 and body["matched"] is False
 
     st, body = post(server, "/v1/verify", {"probe": b64(probe), "hint": corners, "refs": [{"sha256": sha}]})

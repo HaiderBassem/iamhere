@@ -1,11 +1,5 @@
 import { h, mount, loadScript } from '../ui.js';
-import { openCamera, watchForCode, setPendingCapture } from '../lib.js';
-
-// Pulls the check-in token out of a scanned QR: our link, or a bare token.
-export function tokenFrom(text) {
-  const m = /#\/c\/([A-Za-z0-9_-]{40,80})\s*$/.exec(text) || /^([A-Za-z0-9_-]{40,80})$/.exec(text.trim());
-  return m ? m[1] : null;
-}
+import { openCamera, watchForCode, setPendingCapture, tokenFrom } from '../lib.js';
 
 export default async function scan({ page, navigate, onCleanup, setTitle }) {
   setTitle('Check in');
@@ -37,7 +31,7 @@ export default async function scan({ page, navigate, onCleanup, setTitle }) {
       return false;
     },
   });
-  const found = await watch.promise.catch(() => null);
+  const found = await watch.promise;
   if (!found || !alive) return;
   const token = tokenFrom(found.text);
   // keep the frame: in strict mode it is the photo of the screen, no second step needed

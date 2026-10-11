@@ -54,7 +54,7 @@ func (f *fakeVision) label(img []byte, room string) {
 func (f *fakeVision) serve(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Image, Probe string
-		Refs         []struct{ SHA256, Image string }
+		Refs         []struct{ SHA256 string }
 	}
 	json.NewDecoder(r.Body).Decode(&in)
 	f.mu.Lock()
@@ -64,18 +64,15 @@ func (f *fakeVision) serve(w http.ResponseWriter, r *http.Request) {
 	case "/v1/reference":
 		img, _ := base64.StdEncoding.DecodeString(in.Image)
 		h := vision.SHA256(img)
+		f.cached[hex.EncodeToString(h[:])] = true // like the service: cached even when criticised
 		if f.labels[hex.EncodeToString(h[:])] == "blurry" {
 			reply(422, map[string]any{"error": "photo_unusable", "codes": []string{"blurry"}, "message": "The photo is blurry."})
 			return
 		}
-		f.cached[hex.EncodeToString(h[:])] = true
 		reply(200, map[string]int{"width": 320, "height": 240, "keypoints": 1500})
 	case "/v1/verify":
 		var missing []string
 		for _, ref := range in.Refs {
-			if ref.Image != "" {
-				f.cached[ref.SHA256] = true
-			}
 			if !f.cached[ref.SHA256] {
 				missing = append(missing, ref.SHA256)
 			}

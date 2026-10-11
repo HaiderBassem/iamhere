@@ -17,6 +17,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // MaxPhotoBytes bounds every image sent to the service.
@@ -75,6 +77,9 @@ type ReferenceInfo struct {
 type Client struct {
 	base string
 	hc   *http.Client
+	// uploads of references the service has not cached yet, shared by the
+	// check-ins that need the same one at the same time (e.g. after a restart)
+	warming singleflight.Group
 }
 
 // New returns a client for the service at base (e.g. http://vision:8090), or
@@ -88,7 +93,6 @@ func New(base string) *Client {
 
 type wireRef struct {
 	SHA256 string `json:"sha256"`
-	Image  string `json:"image,omitempty"`
 }
 
 type errBody struct {
@@ -165,10 +169,10 @@ func (c *Client) Verify(ctx context.Context, probe []byte, hint *[4][2]float64, 
 		wire[i] = wireRef{SHA256: h}
 		byHash[h] = r
 	}
-	// First without images; the service answers 409 with the hashes it lacks
-	// (first use, or after a restart). Then once more with those images.
+	req["refs"] = wire
+	// The service answers 409 with the references it has no features for (first
+	// use, or after a restart). Those are uploaded one by one, then it is asked again.
 	for attempt := 0; attempt < 2; attempt++ {
-		req["refs"] = wire
 		var res Result
 		status, e, err := c.post(ctx, "/v1/verify", req, &res)
 		if err != nil {
@@ -183,23 +187,41 @@ func (c *Client) Verify(ctx context.Context, probe []byte, hint *[4][2]float64, 
 			if attempt == 1 {
 				return Result{}, fmt.Errorf("%w: references still missing", ErrUnavailable)
 			}
-			missing := map[string]bool{}
 			for _, h := range e.Missing {
-				missing[h] = true
-			}
-			for i := range wire {
-				if !missing[wire[i].SHA256] {
-					continue
+				r, ok := byHash[h]
+				if !ok {
+					return Result{}, fmt.Errorf("%w: asked for an unknown reference", ErrUnavailable)
 				}
-				img, err := byHash[wire[i].SHA256].Load(ctx)
-				if err != nil {
+				if err := c.warm(ctx, h, r); err != nil {
 					return Result{}, err
 				}
-				wire[i].Image = base64.StdEncoding.EncodeToString(img)
 			}
 		default:
 			return Result{}, fmt.Errorf("%w: status %d", ErrUnavailable, status)
 		}
 	}
 	return Result{}, ErrUnavailable
+}
+
+// warm uploads one reference so the service caches its features. Concurrent
+// callers for the same reference share one upload.
+func (c *Client) warm(ctx context.Context, hash string, r Ref) error {
+	_, err, _ := c.warming.Do(hash, func() (any, error) {
+		img, err := r.Load(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var info ReferenceInfo
+		status, _, err := c.post(ctx, "/v1/reference", map[string]any{"image": base64.StdEncoding.EncodeToString(img)}, &info)
+		if err != nil {
+			return nil, err
+		}
+		// 422 (a quality complaint) still caches the features: the photo was
+		// accepted when it was saved, so it is used as it is
+		if status != http.StatusOK && status != http.StatusUnprocessableEntity {
+			return nil, fmt.Errorf("%w: status %d", ErrUnavailable, status)
+		}
+		return nil, nil
+	})
+	return err
 }
