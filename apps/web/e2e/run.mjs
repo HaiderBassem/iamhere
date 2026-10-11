@@ -2,22 +2,36 @@
 //
 //   BASE_URL=http://localhost:8080 node e2e/run.mjs
 //
-// Chromium's fake camera plays generated "rooms" (rooms.mjs), geolocation is
-// mocked per person, and the QR code on the organizer's screen is decoded from
-// the page itself with jsQR, exactly as an attendee's camera would read it.
+// Chromium's fake camera plays generated rooms (apps/vision/tests/camfeed.py,
+// the same scenes the vision service is tested on), geolocation is mocked per
+// person, and the QR code on the organizer's screen is decoded from the page
+// itself with jsQR, exactly as an attendee's camera would read it. Strict mode
+// needs the vision service running (IAH_VISION_URL on the API).
+//
+//   VISION_PYTHON  python with apps/vision/requirements-dev.txt (default python3)
 import { chromium } from 'playwright';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeY4M, writeQRVideo } from './rooms.mjs';
+import { fileURLToPath } from 'node:url';
+import { writeQRVideo } from './rooms.mjs';
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
 const SHOTS = process.env.SHOTS || join(tmpdir(), 'iah-shots');
 mkdirSync(SHOTS, { recursive: true });
 const work = join(tmpdir(), 'iah-rooms');
 mkdirSync(work, { recursive: true });
-writeY4M(join(work, 'a.y4m'), 1);   // the venue
-writeY4M(join(work, 'b.y4m'), 9);   // somewhere else
+const CAMFEED = fileURLToPath(new URL('../../vision/tests/camfeed.py', import.meta.url));
+/** Writes a camera feed: room `room` seen from `seat` (>= 100: straight on), with
+ *  `code` on its screen when given. Chromium reads the file when the camera opens. */
+function camFeed(name, room, seat, code) {
+  const out = join(work, name + '.y4m');
+  execFileSync(process.env.VISION_PYTHON || 'python3', [CAMFEED, out, '--room', String(room), '--seat', String(seat), ...(code ? ['--code', code] : [])]);
+  return name;
+}
+camFeed('a', 1, 100);   // the venue, as the organizer photographs it
+camFeed('b', 9, 100);   // somewhere else
 
 const VENUE = { latitude: 36.19, longitude: 44.01, accuracy: 6 };
 const FAR = { latitude: 36.35, longitude: 44.2, accuracy: 6 };
@@ -190,23 +204,35 @@ try {
   await prof.page.getByRole('button', { name: 'Save place' }).click();
   await prof.page.getByRole('heading', { name: 'Room 204' }).waitFor();
   check(true, 'place saved from the organizer\'s current location');
-  await prof.page.getByRole('button', { name: 'Add photo' }).click();
-  await prof.page.getByRole('button', { name: 'Done' }).click();            // close before the camera is even up
+  await prof.page.getByText('No photos').waitFor();
+  const dialog = prof.page.getByRole('dialog');
+  await prof.page.getByRole('button', { name: 'Take photo' }).click();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();               // close before the camera is even up
   await sleep(1500);
   check((await liveTracks(prof)) === 0, 'closing the photo dialog straight away still turns the camera off');
-  await prof.page.getByRole('button', { name: 'Add photo' }).click();
-  await prof.page.getByRole('button', { name: 'Take photo' }).waitFor();
-  await sleep(700);   // let the fake camera deliver frames
-  await prof.page.getByRole('button', { name: 'Take photo' }).click();
-  await prof.page.getByText(/Saved\. 1 photo/).waitFor();
-  await prof.page.getByRole('button', { name: 'Take photo' }).click();
-  await prof.page.getByText(/Saved\. 2 photos/).waitFor();
+  for (const n of [1, 2, 3]) {
+    await prof.page.getByRole('button', { name: 'Take photo' }).click();
+    await dialog.getByRole('button', { name: 'Take photo' }).and(prof.page.locator(':enabled')).waitFor();
+    await sleep(700);   // let the fake camera deliver frames
+    if (n === 1) await shot(prof, '30-reference-camera');
+    await dialog.getByRole('button', { name: 'Take photo' }).click();
+    await prof.page.getByText(n === 3 ? '3 photos' : `${n} photo${n === 1 ? '' : 's'} · add ${3 - n} more`).waitFor({ timeout: 20000 });
+  }
+  check(await prof.page.locator('.thumb img').count() === 3, 'three photos of the place saved, checked by the vision service, shown as thumbnails');
   await shot(prof, '30-reference-photos');
-  await prof.page.getByRole('button', { name: 'Done' }).click();
-  await prof.page.getByText('2 photos').first().waitFor();
-  check(true, 'two live reference photos enrolled; only fingerprints are stored');
+  await sleep(1000);
+  check((await liveTracks(prof)) === 0, 'the camera is off once the photos are taken');
 
-  section('Strict mode: start, then four different attendees');
+  await prof.page.getByRole('button', { name: 'Test from a seat' }).click();
+  await dialog.getByRole('button', { name: 'Take photo' }).and(prof.page.locator(':enabled')).waitFor();
+  await sleep(700);
+  await dialog.getByRole('button', { name: 'Take photo' }).click();
+  await prof.page.getByRole('heading', { name: /Strong match/ }).waitFor({ timeout: 20000 });
+  check(true, '"Test from a seat" confirms photos from here will be recognized');
+  await shot(prof, '30-test-from-a-seat');
+  await dialog.getByRole('button', { name: 'OK' }).click();
+
+  section('Strict mode: start, then attendees photograph the screen');
   await prof.page.goto(orgUrl);
   await prof.page.getByRole('button', { name: /^Strict/ }).click();
   await prof.page.getByLabel('What is it for?').fill('Strict exam');
@@ -216,65 +242,78 @@ try {
   check(!!strictUrl, 'strict session shows a rotating QR too');
   const strictSession = prof.page.url();
 
-  // 1. right room, at the venue -> verified
-  const carla = await person('Carla Inside', { room: 'a', geo: VENUE });
-  await carla.page.goto(strictUrl);
-  await carla.page.getByRole('button', { name: 'Share my location' }).click();
-  await carla.page.getByRole('button', { name: 'Take photo' }).waitFor();
+  // today's photo of the room, taken from the live session screen
+  await prof.page.getByRole('heading', { name: 'Today’s photo' }).waitFor();
+  await prof.page.getByRole('button', { name: 'Take photo' }).click();
+  await dialog.getByRole('button', { name: 'Take photo' }).and(prof.page.locator(':enabled')).waitFor();
   await sleep(700);
-  await shot(carla, '32-strict-photo-step');
-  await carla.page.getByRole('button', { name: 'Take photo' }).click();
-  await carla.page.getByRole('heading', { name: /You’re checked in/ }).waitFor();
-  check(true, 'right place + right room photo -> checked in');
-  await shot(carla, '33-strict-success');
+  await dialog.getByRole('button', { name: 'Take photo' }).click();
+  await prof.page.getByText(/compared with this and the place’s saved photos/).waitFor({ timeout: 20000 });
+  check(true, 'today\'s photo added from the live session; attendees are compared with it and the saved photos');
 
-  // 2. at the venue but pointing the camera at a different room -> review
-  const dan = await person('Dan Elsewhere', { room: 'b', geo: VENUE });
-  const url3 = await readQR(prof.page);
-  await dan.page.goto(url3);
+  /** An attendee whose camera sees `room` from `seat`, with the code live on the
+   *  organizer's screen right now (or no code); opens that code's link. */
+  async function attendee(name, { room, seat, geo, withCode = true }) {
+    const key = 'cam-' + name.split(' ')[0].toLowerCase();
+    camFeed(key, room, seat);
+    const p = await person(name, { room: key, geo });
+    const url = await readQR(prof.page);
+    camFeed(key, room, seat, withCode ? url : undefined);   // the screen as it is now
+    await p.page.goto(url);
+    return p;
+  }
+  const photoStep = (p) => p.page.getByText('Point at the screen with the code').waitFor();
+
+  // 1. right room, at the venue -> the photo is taken by itself when the code is in view -> verified
+  const carla = await attendee('Carla Inside', { room: 1, seat: 2, geo: VENUE });
+  await carla.page.getByRole('button', { name: 'Share my location' }).click();
+  await shot(carla, '32-strict-photo-step');
+  await carla.page.getByRole('heading', { name: /You’re checked in/ }).waitFor({ timeout: 30000 });
+  check(true, 'right place + photo of this room showing the current code -> checked in, no button to press');
+  await shot(carla, '33-strict-success');
+  await sleep(1000);
+  check((await liveTracks(carla)) === 0, 'the camera is off after the photo');
+
+  // 2. at the venue, the current code, but a different room around it -> review
+  const dan = await attendee('Dan Elsewhere', { room: 9, seat: 2, geo: VENUE });
   await dan.page.getByRole('button', { name: 'Share my location' }).click();
-  await dan.page.getByRole('button', { name: 'Take photo' }).waitFor();
-  await sleep(700);
-  await dan.page.getByRole('button', { name: 'Take photo' }).click();
-  await dan.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor();
-  check(await dan.page.getByText(/did not match the room/).isVisible(), 'wrong-room photo -> sent for review, with a plain-language reason');
+  await dan.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor({ timeout: 30000 });
+  check(await dan.page.getByText(/did not match the room/).isVisible(), 'the code shown in another room -> sent for review, with a plain-language reason');
   await shot(dan, '34-strict-review');
 
   // 3. right room but located far away -> rejected
-  const eve = await person('Eve Faraway', { room: 'a', geo: FAR });
-  const url4 = await readQR(prof.page);
-  await eve.page.goto(url4);
+  const eve = await attendee('Eve Faraway', { room: 1, seat: 3, geo: FAR });
   await eve.page.getByRole('button', { name: 'Share my location' }).click();
-  await eve.page.getByRole('button', { name: 'Take photo' }).waitFor();
-  await sleep(700);
-  await eve.page.getByRole('button', { name: 'Take photo' }).click();
-  await eve.page.getByRole('heading', { name: 'You seem to be outside the place' }).waitFor();
+  await eve.page.getByRole('heading', { name: 'You seem to be outside the place' }).waitFor({ timeout: 30000 });
   check(true, 'confidently outside the radius -> rejected');
   await shot(eve, '35-strict-rejected');
 
   // 4. refuses to share location -> can continue; goes to review
-  const fay = await person('Fay NoGps', { room: 'a', geo: VENUE });
+  const fay = await attendee('Fay NoGps', { room: 1, seat: 4, geo: VENUE });
   await fay.ctx.clearPermissions();
   await fay.ctx.grantPermissions(['camera']);
-  const url5 = await readQR(prof.page);
-  await fay.page.goto(url5);
   await fay.page.getByRole('button', { name: 'Share my location' }).click();
   await fay.page.getByText(/Location is blocked/).waitFor();
   await shot(fay, '36-strict-location-blocked');
   await fay.page.getByRole('button', { name: /Continue without location/ }).click();
-  await fay.page.getByRole('button', { name: 'Take photo' }).waitFor();
-  await sleep(700);
-  await fay.page.getByRole('button', { name: 'Take photo' }).click();
-  await fay.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor();
+  await fay.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor({ timeout: 30000 });
   check(true, 'location denied -> still can finish; goes to review (never silently accepted)');
 
-  // organizer sees the two flagged people and approves one
-  await prof.page.locator('.stat.warn b').filter({ hasText: '2' }).waitFor({ timeout: 8000 });
-  check(true, 'organizer sees 2 to review live');
+  // 5. a photo of the room with no code on the screen (e.g. an old photo) -> review
+  const hal = await attendee('Hal NoCode', { room: 1, seat: 5, geo: VENUE, withCode: false });
+  await hal.page.getByRole('button', { name: 'Share my location' }).click();
+  await photoStep(hal);
+  await hal.page.getByRole('button', { name: 'Take photo anyway' }).click({ timeout: 15000 });
+  await hal.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor({ timeout: 30000 });
+  check(await hal.page.getByText(/did not show the current code/).isVisible(), 'a room photo without the current code -> review, never verified');
+
+  // organizer sees the three flagged people and approves one
+  await prof.page.locator('.stat.warn b').filter({ hasText: '3' }).waitFor({ timeout: 8000 });
+  check(true, 'organizer sees 3 to review live');
   await prof.page.locator('.item', { hasText: 'Dan Elsewhere' }).getByRole('button', { name: 'Approve' }).click();
-  await prof.page.locator('.stat.warn b').filter({ hasText: '1' }).waitFor({ timeout: 8000 });
+  await prof.page.locator('.stat.warn b').filter({ hasText: '2' }).waitFor({ timeout: 8000 });
   await prof.page.locator('.stat.ok b').filter({ hasText: '2' }).waitFor({ timeout: 8000 });
-  check(true, 'approving moves them to checked in (2 in, 1 to review)');
+  check(true, 'approving moves them to checked in (2 in, 2 to review)');
   await shot(prof, '37-live-strict-review');
   check(!(await prof.page.getByText('Eve Faraway').count()), 'a rejected attempt never becomes an attendance record');
 
@@ -284,8 +323,7 @@ try {
         'keyboard focus stays put on the live screen while it updates every second');
 
   // someone in review can try again and get verified straight away
-  const gus = await person('Gus Retry', { room: 'a', geo: VENUE });
-  await gus.page.goto(await readQR(prof.page));
+  const gus = await attendee('Gus Retry', { room: 1, seat: 8, geo: VENUE });
   await gus.page.getByRole('button', { name: 'Share my location' }).click();
   await gus.page.getByRole('button', { name: /^Skip/ }).click();           // skips the photo while the camera starts
   await gus.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor();
@@ -293,13 +331,12 @@ try {
   check((await liveTracks(gus)) === 0, 'skipping the photo turns the camera off');
   await gus.page.goto(BASE + '/#/');                                        // comes back later, fresh from the camera app
   await gus.page.getByRole('heading', { name: /Hi Gus/ }).waitFor();
-  await gus.page.goto(await readQR(prof.page));
+  const gusUrl = await readQR(prof.page);
+  camFeed('cam-gus', 1, 8, gusUrl);
+  await gus.page.goto(gusUrl);
   await gus.page.getByText(/waiting for your organizer’s review/).waitFor();
   await gus.page.getByRole('button', { name: 'Share my location' }).click();
-  await gus.page.getByRole('button', { name: 'Take photo' }).waitFor();
-  await sleep(700);
-  await gus.page.getByRole('button', { name: 'Take photo' }).click();
-  await gus.page.getByRole('heading', { name: /You’re checked in/ }).waitFor();
+  await gus.page.getByRole('heading', { name: /You’re checked in/ }).waitFor({ timeout: 30000 });
   check(true, 'a person in review can retry and is verified by a good attempt');
   await prof.page.locator('.stat.ok b').filter({ hasText: '3' }).waitFor({ timeout: 8000 });
   check(true, 'the organizer\'s count follows (3 in)');
@@ -335,7 +372,7 @@ try {
   await prof.page.goto(BASE + '/#/');
   await shot(prof, '51-home-organizer');
 
-  const allErrors = [prof, ben, carla, dan, eve, fay, gus, rev].flatMap((p) => p.page.errors);
+  const allErrors = [prof, ben, carla, dan, eve, fay, hal, gus, rev].flatMap((p) => p.page.errors);
   check(allErrors.length === 0, 'no JavaScript errors in any browser' + (allErrors.length ? ': ' + allErrors.join(' | ') : ''));
 } catch (err) {
   failed++;

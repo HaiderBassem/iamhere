@@ -7,8 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/iamhere/api/internal/vision"
 )
 
 // maxVenuesPerOrg is a blunt abuse limit, like maxOwnedOrgs.
@@ -80,7 +78,7 @@ func (s *Service) ListVenues(ctx context.Context, u User, orgID uuid.UUID) ([]Ve
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `SELECT v.id, v.name, ST_Y(v.center::geometry), ST_X(v.center::geometry), v.radius_m, v.created_at,
-		(SELECT count(*) FROM venue_fingerprints f WHERE f.venue_id=v.id AND f.org_id=v.org_id)
+		(SELECT count(*) FROM reference_photos f WHERE f.venue_id=v.id AND f.org_id=v.org_id)
 		FROM venues v WHERE v.org_id=$1 ORDER BY v.name, v.id`, orgID)
 	if err != nil {
 		return nil, err
@@ -183,129 +181,4 @@ func (s *Service) venueLocation(ctx context.Context, orgID, id uuid.UUID) (sessi
 	}
 	zero := 0.0
 	return sessionLocation{venueID: &id, lat: &lat, lon: &lon, accuracy: &zero, radiusM: &radius}, err
-}
-
-// ---- reference photos for the visual check ------------------------------------
-
-// maxReferencesPerVenue lets an organization cover a place from several angles.
-const maxReferencesPerVenue = 8
-
-type VenueReference struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// photoError maps a vision error to a client-safe API error.
-func photoError(err error) error {
-	switch {
-	case errors.Is(err, vision.ErrUnusable):
-		return newErr(400, "photo_unusable", "The photo is too dark, covered or blank. Point the camera at the room and try again.")
-	case errors.Is(err, vision.ErrTooLarge):
-		return newErr(400, "photo_too_large", "That photo is too large.")
-	default:
-		return newErr(400, "photo_invalid", "That file is not a usable photo.")
-	}
-}
-
-// AddVenueReference fingerprints a photo of the venue and stores only the
-// fingerprint. Only people who manage the organization can enrol references,
-// because they decide what "this place" looks like.
-func (s *Service) AddVenueReference(ctx context.Context, u User, orgID, venueID uuid.UUID, photo []byte) (VenueReference, error) {
-	if _, err := s.require(ctx, u, orgID, PermManageOrg); err != nil {
-		return VenueReference{}, err
-	}
-	fp, err := vision.Fingerprint(photo)
-	if err != nil {
-		return VenueReference{}, photoError(err)
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return VenueReference{}, err
-	}
-	defer tx.Rollback(ctx)
-	// lock the venue row so the per-venue cap cannot be overshot concurrently
-	var one int
-	if err := tx.QueryRow(ctx, `SELECT 1 FROM venues WHERE id=$1 AND org_id=$2 FOR UPDATE`, venueID, orgID).Scan(&one); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return VenueReference{}, ErrNotFound
-		}
-		return VenueReference{}, err
-	}
-	var n int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM venue_fingerprints WHERE venue_id=$1 AND org_id=$2`, venueID, orgID).Scan(&n); err != nil {
-		return VenueReference{}, err
-	}
-	if n >= maxReferencesPerVenue {
-		return VenueReference{}, newErr(409, "reference_limit", "This place already has the maximum number of reference photos. Remove one first.")
-	}
-	var ref VenueReference
-	if err := tx.QueryRow(ctx, `INSERT INTO venue_fingerprints(org_id, venue_id, fingerprint, created_by)
-		VALUES($1,$2,$3,$4) RETURNING id, created_at`, orgID, venueID, fp, u.ID).Scan(&ref.ID, &ref.CreatedAt); err != nil {
-		return VenueReference{}, err
-	}
-	if err := audit(ctx, tx, &orgID, u.ID, "venue.reference.add", ref.ID.String(), map[string]any{"venue": venueID}); err != nil {
-		return VenueReference{}, err
-	}
-	return ref, tx.Commit(ctx)
-}
-
-func (s *Service) ListVenueReferences(ctx context.Context, u User, orgID, venueID uuid.UUID) ([]VenueReference, error) {
-	if _, err := s.require(ctx, u, orgID, PermManageOrg); err != nil {
-		return nil, err
-	}
-	rows, err := s.pool.Query(ctx, `SELECT id, created_at FROM venue_fingerprints
-		WHERE venue_id=$1 AND org_id=$2 ORDER BY created_at, id`, venueID, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []VenueReference{}
-	for rows.Next() {
-		var r VenueReference
-		if err := rows.Scan(&r.ID, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-func (s *Service) DeleteVenueReference(ctx context.Context, u User, orgID, venueID, refID uuid.UUID) error {
-	if _, err := s.require(ctx, u, orgID, PermManageOrg); err != nil {
-		return err
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `DELETE FROM venue_fingerprints WHERE id=$1 AND venue_id=$2 AND org_id=$3`, refID, venueID, orgID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	if err := audit(ctx, tx, &orgID, u.ID, "venue.reference.delete", refID.String(), map[string]any{"venue": venueID}); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// venueFingerprints loads the reference fingerprints used by the visual check.
-func (s *Service) venueFingerprints(ctx context.Context, orgID, venueID uuid.UUID) ([][]byte, error) {
-	rows, err := s.pool.Query(ctx, `SELECT fingerprint FROM venue_fingerprints WHERE venue_id=$1 AND org_id=$2`, venueID, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out [][]byte
-	for rows.Next() {
-		var fp []byte
-		if err := rows.Scan(&fp); err != nil {
-			return nil, err
-		}
-		out = append(out, fp)
-	}
-	return out, rows.Err()
 }

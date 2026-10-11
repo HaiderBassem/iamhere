@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -14,9 +16,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/iamhere/api/internal/app"
+	"github.com/iamhere/api/internal/vision"
 )
 
 func TestInvitesAndVenuesOverHTTP(t *testing.T) {
@@ -187,6 +191,60 @@ func photoDataURL(seed int64, brightness int) string {
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(b.Bytes())
 }
 
+// fakeVision stands in for the vision service: every room matches, and the
+// photo "shows" whatever code text follows "code=" in the probe bytes.
+type fakeVision struct {
+	client *vision.Client
+}
+
+func newFakeVision(t *testing.T) *fakeVision {
+	var mu sync.Mutex
+	cached := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Image, Probe string
+			Refs         []struct{ SHA256, Image string }
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		mu.Lock()
+		defer mu.Unlock()
+		reply := func(status int, v any) { w.WriteHeader(status); _ = json.NewEncoder(w).Encode(v) }
+		switch r.URL.Path {
+		case "/v1/reference":
+			img, _ := base64.StdEncoding.DecodeString(in.Image)
+			h := vision.SHA256(img)
+			cached[hex.EncodeToString(h[:])] = true
+			reply(200, map[string]int{"width": 320, "height": 240, "keypoints": 1500})
+		case "/v1/verify":
+			var missing []string
+			for _, ref := range in.Refs {
+				if ref.Image != "" {
+					cached[ref.SHA256] = true
+				}
+				if !cached[ref.SHA256] {
+					missing = append(missing, ref.SHA256)
+				}
+			}
+			if len(missing) > 0 {
+				reply(409, map[string]any{"error": "missing_refs", "missing": missing})
+				return
+			}
+			p, _ := base64.StdEncoding.DecodeString(in.Probe)
+			res := vision.Result{Codes: []string{}, Matched: len(in.Refs) > 0, Score: 150, Threshold: 40, Model: "fake"}
+			if _, code, ok := strings.Cut(string(p), "code="); ok {
+				res.Codes = append(res.Codes, code)
+			}
+			reply(200, res)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return &fakeVision{client: vision.New(srv.URL)}
+}
+
+func probeDataURL(token string) string {
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString([]byte("code=https://attend.example.org/#/c/"+token))
+}
+
 func TestStrictFlowOverHTTP(t *testing.T) {
 	ts := newServer(t)
 	anon := client{t, ts.URL, ""}
@@ -207,8 +265,8 @@ func TestStrictFlowOverHTTP(t *testing.T) {
 	owner.json("POST", base+"/venues", map[string]any{"name": "Room 1", "lat": 36.19, "lon": 44.01, "radius_m": 30}, 201, &venue)
 	vbase := base + "/venues/" + venue.ID.String()
 
-	// enrol a reference photo; garbage and covered lenses are refused with clear codes
-	var ref app.VenueReference
+	// save a place photo; garbage and non-images are refused
+	var ref app.ReferencePhoto
 	owner.json("POST", vbase+"/references", map[string]any{"photo": photoDataURL(1, 0)}, 201, &ref)
 	owner.json("POST", vbase+"/references", map[string]any{"photo": "!!notbase64!!"}, 400, nil)
 	owner.json("POST", vbase+"/references", map[string]any{"photo": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString([]byte("plain text, not a picture at all...."))}, 400, nil)
@@ -217,35 +275,62 @@ func TestStrictFlowOverHTTP(t *testing.T) {
 	if vs.Items[0].ReferenceCount != 1 {
 		t.Fatalf("%+v", vs)
 	}
-	var refs struct{ Items []app.VenueReference }
+	var refs struct{ Items []app.ReferencePhoto }
 	owner.json("GET", vbase+"/references", nil, 200, &refs)
 	if len(refs.Items) != 1 {
 		t.Fatalf("%+v", refs)
 	}
 	stu.json("GET", vbase+"/references", nil, 404, nil) // not a member
 
+	// the stored image is served back to the organizer only
+	code, img := owner.do("GET", base+"/references/"+ref.ID.String()+"/image", nil)
+	if code != 200 || len(img) < 100 {
+		t.Fatalf("image: %d %d bytes", code, len(img))
+	}
+	if code, _ := stu.do("GET", base+"/references/"+ref.ID.String()+"/image", nil); code != 404 {
+		t.Fatalf("student read a reference image: %d", code)
+	}
+
+	// "test from a seat"
+	var pt app.PlaceTest
+	owner.json("POST", vbase+"/test", map[string]any{"photo": photoDataURL(2, 0)}, 200, &pt)
+	if !pt.Matched || pt.References != 1 {
+		t.Fatalf("%+v", pt)
+	}
+
 	var sess app.Session
 	owner.json("POST", base+"/sessions", map[string]any{"title": "Strict", "venue_id": venue.ID, "mode": "strict"}, 201, &sess)
 	owner.json("POST", base+"/sessions", map[string]any{"title": "Bad", "mode": "paranoid"}, 400, nil)
-	var q app.QRInfo
-	owner.json("GET", base+"/sessions/"+sess.ID.String()+"/qr", nil, 200, &q)
+	sbase := base + "/sessions/" + sess.ID.String()
 
+	// today's photo for this session
+	var today app.ReferencePhoto
+	owner.json("POST", sbase+"/references", map[string]any{"photo": photoDataURL(3, 0)}, 201, &today)
+	owner.json("GET", sbase+"/references", nil, 200, &refs)
+	if len(refs.Items) != 1 {
+		t.Fatalf("%+v", refs)
+	}
+
+	var q app.QRInfo
+	owner.json("GET", sbase+"/qr", nil, 200, &q)
 	var sc app.ScanResult
 	stu.json("POST", "/v1/checkins/scan", map[string]any{"token": q.Token}, 200, &sc)
 	if !sc.NeedsGPS || !sc.NeedsPhoto || sc.Ticket == "" {
 		t.Fatalf("%+v", sc)
 	}
 	gps := map[string]any{"lat": 36.19001, "lon": 44.01001, "accuracy_m": 8, "fix_age_ms": 400}
+	hint := [4][2]float64{{10, 10}, {90, 10}, {90, 90}, {10, 90}}
 	var res app.CheckInResult
-	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "gps": gps, "photo": photoDataURL(1, 22)}, 200, &res)
+	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "gps": gps, "photo": probeDataURL(q.Token), "photo_hint": hint}, 200, &res)
 	if res.Status != "verified" || res.Mode != "strict" {
 		t.Fatalf("%+v", res)
 	}
 	// unknown fields are still refused, and an oversized body is not buffered
 	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "bogus": 1}, 400, nil)
-	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "photo": strings.Repeat("A", 2<<20)}, 400, nil)
+	stu.json("POST", "/v1/checkins", map[string]any{"ticket": sc.Ticket, "photo": strings.Repeat("A", 4<<20)}, 400, nil)
 	stu.json("POST", "/v1/checkins/scan", map[string]any{"token": "nope"}, 400, nil)
 
+	owner.json("DELETE", sbase+"/references/"+today.ID.String(), nil, 204, nil)
 	owner.json("DELETE", vbase+"/references/"+ref.ID.String(), nil, 204, nil)
 	owner.json("DELETE", vbase+"/references/"+ref.ID.String(), nil, 404, nil)
 }

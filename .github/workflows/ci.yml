@@ -48,13 +48,36 @@ jobs:
       - name: tests (race detector, real PostGIS)
         run: go test -race -count=1 ./...
 
+  vision:
+    # The photo check of strict mode: QR reading, room recognition, the HTTP protocol.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/vision
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: apps/vision/requirements*.txt
+      - name: install (CPU-only torch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+          pip install -r requirements-dev.txt
+      - name: tests
+        run: python -m pytest -q
+
   image:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - name: build API image
         run: docker build -t iamhere-api apps/api
+      - name: build vision image (loads the models at build time)
+        run: docker build -t iamhere-vision apps/vision
       - name: compose config validates
         working-directory: infra
         env:
@@ -72,8 +95,8 @@ jobs:
 
   web:
     # End-to-end tests of the web app in a real browser: organizers and attendees
-    # on separate phones, a fake camera playing real scenes, mocked GPS, the live
-    # QR decoded from the screen exactly as a phone camera would.
+    # on separate phones, a fake camera playing generated rooms (with the live code
+    # on their screen), mocked GPS, the real vision service checking the photos.
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -96,10 +119,23 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: apps/vision/requirements*.txt
+      - name: install and start the vision service
+        working-directory: apps/vision
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+          pip install -r requirements-dev.txt
+          IAH_VISION_LISTEN=127.0.0.1:8090 IAH_VISION_WORKERS=2 python -m iahvision.server > "$RUNNER_TEMP/vision.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fsS localhost:8090/healthz && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/vision.log"; exit 1
       - name: build and start the API (serves the web app, dev sign-in)
         run: |
           (cd apps/api && go build -o "$RUNNER_TEMP/iah-api" ./cmd/api)
-          IAH_DEV_AUTH=1 IAH_LISTEN=:8080 IAH_WEB_DIR="$PWD/apps/web/public" \
+          IAH_DEV_AUTH=1 IAH_LISTEN=:8080 IAH_WEB_DIR="$PWD/apps/web/public" IAH_VISION_URL=http://127.0.0.1:8090 \
             IAH_DATABASE_URL='postgres://postgres:dev@localhost:5432/postgres?sslmode=disable' \
             "$RUNNER_TEMP/iah-api" > "$RUNNER_TEMP/api.log" 2>&1 &
           for i in $(seq 1 30); do curl -fsS localhost:8080/readyz && exit 0; sleep 1; done
@@ -112,6 +148,7 @@ jobs:
         env:
           BASE_URL: http://localhost:8080
           SHOTS: ${{ runner.temp }}/shots
+          VISION_PYTHON: python
         run: npm run e2e
       - name: sign-in end-to-end (OIDC code + PKCE, refresh, logout; mock identity provider)
         working-directory: apps/web
@@ -121,9 +158,9 @@ jobs:
         run: |
           PGPASSWORD=dev psql -h localhost -U postgres -c 'CREATE DATABASE iamhere_oidc'
           npm run e2e:oidc
-      - name: API log (on failure)
+      - name: API and vision logs (on failure)
         if: failure()
-        run: tail -n 200 "$RUNNER_TEMP/api.log"
+        run: tail -n 200 "$RUNNER_TEMP/api.log" "$RUNNER_TEMP/vision.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -47,6 +47,13 @@ export async function download(path, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+/** An authenticated image as an object URL (for <img src>); revoke it when done. */
+export async function imageURL(path) {
+  const res = await call('GET', path);
+  if (!res.ok) throw new ApiError(res.status, 'error', 'Could not load the photo.');
+  return URL.createObjectURL(await res.blob());
+}
+
 /**
  * Server-sent events over fetch (EventSource cannot send an Authorization
  * header). Resolves when the stream ends; rejects on failure. onEvent(name, data).

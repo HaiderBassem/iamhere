@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,9 @@ type CheckInInput struct {
 	Ticket string
 	GPS    *GPSInput
 	Photo  []byte
+	// PhotoHint is where the browser saw the QR code in Photo (four corners).
+	// Only a hint: the code is read again on the server.
+	PhotoHint *[4][2]float64
 }
 
 type CheckInResult struct {
@@ -158,13 +162,11 @@ func (s *Service) Scan(ctx context.Context, u User, token string) (ScanResult, e
 		// Only ask for steps that can change the outcome: GPS needs a session
 		// anchor, the photo needs reference photos of the place.
 		res.NeedsGPS = c.hasAnchor
-		if c.venueID != nil {
-			refs, err := s.venueFingerprints(ctx, c.orgID, *c.venueID)
-			if err != nil {
-				return ScanResult{}, err
-			}
-			res.NeedsPhoto = len(refs) > 0
+		refs, err := s.sessionRefs(ctx, c.orgID, sid, c.venueID)
+		if err != nil {
+			return ScanResult{}, err
 		}
+		res.NeedsPhoto = len(refs) > 0 && s.vis != nil
 	}
 	var status string
 	err = s.pool.QueryRow(ctx, `SELECT status::text FROM attendance_records WHERE session_id=$1 AND user_id=$2`, sid, u.ID).Scan(&status)
@@ -225,6 +227,7 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 	// Normal mode ignores whatever location or photo a client may still send.
 	var gps attendance.GPSReading
 	var visualMatched, visualAvailable bool
+	var visualReason string // a more specific reason than "photo did not match"
 	ev := map[string]any{"mode": string(c.mode), "qr": "valid"}
 	if c.mode.Checked() {
 		if in.GPS != nil && c.dist != nil {
@@ -238,21 +241,34 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 			// Privacy: store the derived distance and accuracy, never raw coordinates.
 			ev["gps"] = map[string]any{"distance_m": round1(gps.DistanceM), "accuracy_m": round1(gps.AccuracyM), "fix_age_s": round1(gps.AgeS)}
 		}
-		if c.venueID != nil {
-			refs, err := s.venueFingerprints(ctx, c.orgID, *c.venueID)
-			if err != nil {
-				return CheckInResult{}, err
+		refs, err := s.sessionRefs(ctx, c.orgID, sid, c.venueID)
+		if err != nil {
+			return CheckInResult{}, err
+		}
+		visualAvailable = len(refs) > 0 && s.vis != nil
+		if visualAvailable && len(in.Photo) > 0 {
+			if len(in.Photo) > vision.MaxPhotoBytes {
+				return CheckInResult{}, newErr(400, "photo_too_large", "That photo is too large.")
 			}
-			visualAvailable = len(refs) > 0
-			if visualAvailable && len(in.Photo) > 0 {
-				fp, err := vision.Fingerprint(in.Photo)
-				if err != nil {
-					return CheckInResult{}, photoError(err) // 400: the client can retake the photo
+			vctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			vr, err := s.vis.Verify(vctx, in.Photo, in.PhotoHint, refs)
+			cancel()
+			var pe *vision.PhotoError
+			switch {
+			case errors.As(err, &pe):
+				return CheckInResult{}, newErr(400, "photo_unusable", pe.Message) // retryable: retake the photo
+			case err != nil:
+				// never a pass: the person goes to review instead of being blocked
+				visualReason = attendance.ReasonVisualUnavailable
+				ev["visual"] = map[string]any{"error": "unavailable"}
+			default:
+				codeOK := s.codeInPhoto(c, vr.Codes, now)
+				visualMatched = vr.Matched && codeOK
+				if !codeOK {
+					visualReason = attendance.ReasonPhotoNoCode
 				}
-				d := vision.Best(refs, fp)
-				visualMatched = d >= 0 && d <= vision.MatchMaxDistance
-				// Privacy: the photo is discarded; only the similarity is kept.
-				ev["visual"] = map[string]any{"distance": d, "matched": visualMatched}
+				// Privacy: the photo is discarded; only the verdict is kept.
+				ev["visual"] = map[string]any{"score": vr.Score, "room_matched": vr.Matched, "current_code_in_photo": codeOK, "model": vr.Model}
 			}
 		}
 	}
@@ -265,6 +281,13 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 		HasAnchor:       c.hasAnchor,
 		VisualAvailable: visualAvailable,
 	}, gps, visualMatched)
+	if visualReason != "" {
+		for i, r := range dec.Reasons {
+			if r == attendance.ReasonVisualRequired {
+				dec.Reasons[i] = visualReason
+			}
+		}
+	}
 	ev["reasons"] = dec.Reasons
 	evJSON, _ := json.Marshal(ev)
 
@@ -309,3 +332,27 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 }
 
 func round1(f float64) float64 { return math.Round(f*10) / 10 }
+
+// photoCodeGraceSlots is how old the code inside a strict-mode photo may be:
+// the photo is taken the moment the code is seen, then uploaded, so allow a
+// few rotations for slow connections (5 s rotation: 15-20 s).
+const photoCodeGraceSlots = 3
+
+// codeInPhoto reports whether one of the codes read in the photo is a recent
+// check-in code of this session. That proves the camera was pointed at the
+// live screen moments ago, not at an old photo of the room.
+func (s *Service) codeInPhoto(c *checkinSession, codes []string, now time.Time) bool {
+	for _, text := range codes {
+		tok := text
+		if i := strings.LastIndex(text, "#/c/"); i >= 0 {
+			tok = text[i+len("#/c/"):]
+		}
+		if id, err := qr.SessionID(tok); err != nil || id != c.id {
+			continue
+		}
+		if qr.Verify(c.secret, c.id, tok, now, time.Duration(c.rotation)*time.Second, photoCodeGraceSlots) == nil {
+			return true
+		}
+	}
+	return false
+}

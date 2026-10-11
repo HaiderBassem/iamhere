@@ -1,0 +1,5 @@
+e92685f57f8318b18725c5c8c0bd28c7fe188d9a Wed Jan 15 13:22:03 2025 -0300
+https://github.com/verlab/accelerated_features (Apache-2.0, see LICENSE)
+model.py, interpolator.py: modules/ at that commit, unchanged.
+../../models/xfeat.pt, ../../models/xfeat-lighterglue.pt: weights/ at that commit
+(the LighterGlue file keeps only the matcher's tensors).

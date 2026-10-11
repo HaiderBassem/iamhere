@@ -112,12 +112,17 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 					r.Get("/venues/{vid}/references", s.h(s.listReferences))
 					r.Post("/venues/{vid}/references", s.h(s.addReference))
 					r.Delete("/venues/{vid}/references/{rid}", s.h(s.deleteReference))
+					r.Post("/venues/{vid}/test", s.h(s.testPlace))
+					r.Get("/references/{rid}/image", s.h(s.referenceImage))
 
 					r.Get("/sessions", s.h(s.listSessions))
 					r.Post("/sessions", s.h(s.createSession))
 					r.Get("/sessions/{sid}", s.h(s.getSession))
 					r.Get("/sessions/{sid}/qr", s.h(s.sessionQR))
 					r.Post("/sessions/{sid}/close", s.h(s.closeSession))
+					r.Get("/sessions/{sid}/references", s.h(s.listSessionRefs))
+					r.Post("/sessions/{sid}/references", s.h(s.addSessionRef))
+					r.Delete("/sessions/{sid}/references/{rid}", s.h(s.deleteSessionRef))
 					r.Get("/sessions/{sid}/attendance", s.h(s.listAttendance))
 					r.Get("/sessions/{sid}/attendance.csv", s.h(s.exportCSV))
 					r.Post("/sessions/{sid}/attendance/manual", s.h(s.manual))
@@ -329,7 +334,7 @@ func (s *Server) h(fn handler) http.HandlerFunc {
 
 const (
 	maxJSONBody  = 64 << 10
-	maxPhotoBody = 1 << 20 // a photo travels as base64 inside JSON
+	maxPhotoBody = 3 << 20 // a photo (<= ~2 MB) travels as base64 inside JSON
 )
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) error {
@@ -475,6 +480,8 @@ func (s *Server) checkIn(w http.ResponseWriter, r *http.Request, u app.User) err
 		Ticket string        `json:"ticket"`
 		GPS    *app.GPSInput `json:"gps"`
 		Photo  string        `json:"photo"`
+		// where the browser saw the QR code in the photo (only a hint)
+		PhotoHint *[4][2]float64 `json:"photo_hint"`
 	}
 	if err := decodeMax(w, r, &in, maxPhotoBody); err != nil {
 		return err
@@ -483,7 +490,7 @@ func (s *Server) checkIn(w http.ResponseWriter, r *http.Request, u app.User) err
 	if err != nil {
 		return err
 	}
-	res, err := s.svc.CheckIn(r.Context(), u, app.CheckInInput{Token: in.Token, Ticket: in.Ticket, GPS: in.GPS, Photo: photo})
+	res, err := s.svc.CheckIn(r.Context(), u, app.CheckInInput{Token: in.Token, Ticket: in.Ticket, GPS: in.GPS, Photo: photo, PhotoHint: in.PhotoHint})
 	if err != nil {
 		return err
 	}
@@ -751,13 +758,7 @@ func (s *Server) addReference(w http.ResponseWriter, r *http.Request, u app.User
 	if !s.creates.allow(u.ID) {
 		return app.TooMany()
 	}
-	var in struct {
-		Photo string `json:"photo"`
-	}
-	if err := decodeMax(w, r, &in, maxPhotoBody); err != nil {
-		return err
-	}
-	photo, err := decodePhoto(in.Photo)
+	photo, err := photoBody(w, r)
 	if err != nil {
 		return err
 	}
@@ -792,6 +793,105 @@ func (s *Server) deleteReference(w http.ResponseWriter, r *http.Request, u app.U
 		return err
 	}
 	if err := s.svc.DeleteVenueReference(r.Context(), u, org, vid, rid); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// photoBody reads {"photo": "<base64 or data URL>"}.
+func photoBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	var in struct {
+		Photo string `json:"photo"`
+	}
+	if err := decodeMax(w, r, &in, maxPhotoBody); err != nil {
+		return nil, err
+	}
+	return decodePhoto(in.Photo)
+}
+
+func (s *Server) testPlace(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	if !s.creates.allow(u.ID) {
+		return app.TooMany()
+	}
+	photo, err := photoBody(w, r)
+	if err != nil {
+		return err
+	}
+	res, err := s.svc.TestVenuePhoto(r.Context(), u, org, vid, photo)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, res)
+	return nil
+}
+
+func (s *Server) referenceImage(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	rid, err := uuidParam(r, "rid")
+	if err != nil {
+		return err
+	}
+	img, err := s.svc.ReferenceImage(r.Context(), u, org, rid)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(img))
+	w.Header().Set("Cache-Control", "private, max-age=3600") // immutable per id
+	_, _ = w.Write(img)
+	return nil
+}
+
+func (s *Server) listSessionRefs(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, sid, err := orgSession(r)
+	if err != nil {
+		return err
+	}
+	items, err := s.svc.ListSessionReferences(r.Context(), u, org, sid)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+	return nil
+}
+
+func (s *Server) addSessionRef(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, sid, err := orgSession(r)
+	if err != nil {
+		return err
+	}
+	if !s.creates.allow(u.ID) {
+		return app.TooMany()
+	}
+	photo, err := photoBody(w, r)
+	if err != nil {
+		return err
+	}
+	ref, err := s.svc.AddSessionReference(r.Context(), u, org, sid, photo)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 201, ref)
+	return nil
+}
+
+func (s *Server) deleteSessionRef(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, sid, err := orgSession(r)
+	if err != nil {
+		return err
+	}
+	rid, err := uuidParam(r, "rid")
+	if err != nil {
+		return err
+	}
+	if err := s.svc.DeleteSessionReference(r.Context(), u, org, sid, rid); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

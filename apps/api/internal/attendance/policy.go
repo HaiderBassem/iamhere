@@ -66,6 +66,11 @@ const (
 	ReasonVisualNotSetUp  = "visual_not_configured"
 	ReasonGPSWithinRadius = "gps_within_radius"
 	ReasonQROnly          = "qr_only"
+	// The photo was readable but did not show the current check-in code, so it
+	// does not prove the camera was pointed at the live screen.
+	ReasonPhotoNoCode = "photo_without_current_code"
+	// The photo could not be checked (vision service down or overloaded).
+	ReasonVisualUnavailable = "visual_check_unavailable"
 )
 
 // Decide combines GPS evidence under the org policy. Principles:
