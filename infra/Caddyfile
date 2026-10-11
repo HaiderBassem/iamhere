@@ -3,10 +3,28 @@
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
 	}
-	# flush_interval -1 keeps the live attendance stream unbuffered
+
+	# API: flush_interval -1 keeps the live attendance stream unbuffered
 	@api path /v1/* /healthz
-	reverse_proxy @api api:8080 {
-		flush_interval -1
+	handle @api {
+		reverse_proxy api:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Web app: static files; unknown paths fall back to index.html (client-side routes).
+	# The app loads no third-party code. It talks to this site and to the identity provider.
+	handle {
+		root * /srv/web
+		header {
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' {$IAH_AUTH_ORIGIN}; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+			X-Frame-Options DENY
+			Permissions-Policy "camera=(self), geolocation=(self), microphone=()"
+			Cache-Control "no-cache"
+		}
+		try_files {path} /index.html
+		file_server
 	}
 }

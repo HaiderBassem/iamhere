@@ -46,7 +46,7 @@ func run(log *slog.Logger) error {
 	})
 	go expireLoop(ctx, svc, log)
 
-	return serve(ctx, cfg, httpapi.New(svc, ver, log, pool.Ping, cfg.CORSOrigins...), log)
+	return serve(ctx, cfg, httpapi.New(svc, ver, log, pool.Ping, httpapi.Options{CORSOrigins: cfg.CORSOrigins, Public: publicConfig(cfg), WebDir: cfg.WebDir}), log)
 }
 
 func openPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
@@ -108,4 +108,11 @@ func serve(ctx context.Context, cfg config.Config, h http.Handler, log *slog.Log
 		return err
 	}
 	return nil
+}
+
+func publicConfig(cfg config.Config) httpapi.PublicConfig {
+	if cfg.OIDCIssuer == "" {
+		return httpapi.PublicConfig{Auth: "dev"}
+	}
+	return httpapi.PublicConfig{Auth: "oidc", Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID}
 }

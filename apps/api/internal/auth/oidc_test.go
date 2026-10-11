@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -116,6 +117,18 @@ func TestDevVerifier(t *testing.T) {
 	id, err := Dev{}.Verify(context.Background(), "dev:s1:Full: Name")
 	if err != nil || id.Subject != "s1" || id.Name != "Full: Name" || id.Issuer != "dev" {
 		t.Fatalf("%+v %v", id, err)
+	}
+	// a browser sends non-Latin names percent-encoded; both forms are understood
+	for raw, want := range map[string]string{
+		"dev:k1:" + url.PathEscape("ئاوات کوردی"): "ئاوات کوردی",
+		"dev:k2:ئاوات":        "ئاوات",
+		"dev:p1:100%":         "100%",
+		"dev:p2:Ali%20Hassan": "Ali Hassan",
+	} {
+		id, err := Dev{}.Verify(context.Background(), raw)
+		if err != nil || id.Name != want {
+			t.Errorf("%q -> %q, %v (want %q)", raw, id.Name, err, want)
+		}
 	}
 	for _, bad := range []string{"", "dev:", "dev:x", "dev::n", "dev:x: ", "foo:x:y"} {
 		if _, err := (Dev{}).Verify(context.Background(), bad); err == nil {

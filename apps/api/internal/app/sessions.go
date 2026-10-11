@@ -39,6 +39,7 @@ type CreateSessionInput struct {
 	Anchor         *Anchor    // organizer device position; optional
 	VenueID        *uuid.UUID // registered venue; wins over Anchor
 	DurationS      int        // advanced; 0 = organization default
+	Mode           string     // "standard" | "strict"; "" = organization default
 }
 
 type Session struct {
@@ -96,6 +97,15 @@ func (s *Service) CreateSession(ctx context.Context, u User, orgID uuid.UUID, in
 	if in.DurationS != 0 && (in.DurationS < 60 || in.DurationS > 86400) {
 		return Session{}, invalid("Duration must be between 1 minute and 24 hours.")
 	}
+	switch in.Mode {
+	case "", "standard", "strict", "visual":
+	default:
+		return Session{}, invalid("Unknown verification mode.")
+	}
+	var mode *string
+	if in.Mode != "" {
+		mode = &in.Mode
+	}
 	if len(in.IdempotencyKey) > 100 {
 		return Session{}, invalid("Idempotency key is too long.")
 	}
@@ -119,13 +129,13 @@ func (s *Service) CreateSession(ctx context.Context, u User, orgID uuid.UUID, in
 		 qr_secret, anchor, anchor_accuracy_m, idempotency_key, venue_id, location_source)
 		SELECT $1, $2, $3, $4::timestamptz,
 		       $4::timestamptz + make_interval(secs => COALESCE(NULLIF($5::int,0), st.default_duration_s)),
-		       st.verification_mode, COALESCE($11::int, st.gps_radius_m), st.max_gps_accuracy_m, st.qr_rotation_s, $6,
+		       COALESCE($14::verification_mode, st.verification_mode), COALESCE($11::int, st.gps_radius_m), st.max_gps_accuracy_m, st.qr_rotation_s, $6,
 		       CASE WHEN $7::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($8::float8,$7::float8),4326)::geography END,
 		       $9::float8, $10, $12::uuid, $13
 		FROM organization_settings st WHERE st.org_id=$1
 		ON CONFLICT (org_id, created_by, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 		RETURNING id`,
-		orgID, u.ID, title, now, in.DurationS, secret, loc.lat, loc.lon, loc.accuracy, key, loc.radiusM, loc.venueID, loc.source).Scan(&id)
+		orgID, u.ID, title, now, in.DurationS, secret, loc.lat, loc.lon, loc.accuracy, key, loc.radiusM, loc.venueID, loc.source, mode).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) && key != nil {
 		err = s.pool.QueryRow(ctx, `SELECT id FROM attendance_sessions WHERE org_id=$1 AND created_by=$2 AND idempotency_key=$3`,
 			orgID, u.ID, *key).Scan(&id)

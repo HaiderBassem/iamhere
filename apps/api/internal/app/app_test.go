@@ -75,7 +75,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{pool: pool, now: time.Date(2030, 1, 1, 10, 0, 3, 0, time.UTC)}
-	e.svc = New(pool, Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: 60 * time.Second})
+	e.svc = New(pool, Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: 30 * time.Second}) // production default for strict mode
 	e.svc.Now = e.clock
 	return e
 }
@@ -103,6 +103,16 @@ var anchor = &Anchor{Lat: 36.19, Lon: 44.01, AccuracyM: 5}
 func (e *env) session(t *testing.T, u User, o Org, a *Anchor) Session {
 	t.Helper()
 	s, err := e.svc.CreateSession(context.Background(), u, o.ID, CreateSessionInput{Title: "Software Engineering Lecture", Anchor: a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// strictSession starts a strict-mode session (no venue: GPS from the anchor only).
+func (e *env) strictSession(t *testing.T, u User, o Org, a *Anchor) Session {
+	t.Helper()
+	s, err := e.svc.CreateSession(context.Background(), u, o.ID, CreateSessionInput{Title: "Strict lecture", Anchor: a, Mode: "strict"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +148,7 @@ func TestHappyPathAndDefaults(t *testing.T) {
 	if d := s.EndsAt.Sub(s.StartsAt); d != 30*time.Minute {
 		t.Fatalf("default duration %v", d)
 	}
-	if s.GPSRadiusM != 20 || s.QRRotationS != 10 || s.Status != "active" {
+	if s.GPSRadiusM != 20 || s.QRRotationS != 5 || s.Status != "active" || s.VerificationMode != "standard" {
 		t.Fatalf("defaults: %+v", s)
 	}
 	stu := e.user(t, "ئاوات کوردی")
@@ -162,8 +172,9 @@ func TestGPSOutcomes(t *testing.T) {
 	ctx := context.Background()
 	prof := e.user(t, "P")
 	o := e.org(t, prof, "gps")
-	s := e.session(t, prof, o, anchor)
+	s, _ := e.strictVenueSession(t, prof, o)
 	tok := e.token(t, prof, o, s)
+	photo := testPhoto(1, 20, 6) // the right place; isolates the GPS outcome
 
 	cases := []struct {
 		name string
@@ -177,7 +188,7 @@ func TestGPSOutcomes(t *testing.T) {
 	}
 	for _, c := range cases {
 		u := e.user(t, c.name)
-		r, err := e.svc.CheckIn(ctx, u, CheckInInput{Token: tok, GPS: c.gps})
+		r, err := e.svc.CheckIn(ctx, u, CheckInInput{Token: tok, GPS: c.gps, Photo: photo})
 		if err != nil || r.Status != c.want {
 			t.Errorf("%s: %+v %v", c.name, r, err)
 		}
@@ -191,8 +202,8 @@ func TestGPSOutcomes(t *testing.T) {
 	}
 	// a later good attempt upgrades needs_review to verified
 	u := e.user(t, "upgrade")
-	e.svc.CheckIn(ctx, u, CheckInInput{Token: tok, GPS: nil})
-	r, _ := e.svc.CheckIn(ctx, u, CheckInInput{Token: tok, GPS: near()})
+	e.svc.CheckIn(ctx, u, CheckInInput{Token: tok, Photo: photo})
+	r, _ := e.svc.CheckIn(ctx, u, CheckInInput{Token: tok, GPS: near(), Photo: photo})
 	if r.Status != "verified" {
 		t.Fatalf("upgrade: %+v", r)
 	}
@@ -202,7 +213,7 @@ func TestNoAnchorIsHonest(t *testing.T) {
 	e := newEnv(t)
 	prof := e.user(t, "P")
 	o := e.org(t, prof, "noanchor")
-	s := e.session(t, prof, o, nil)
+	s := e.strictSession(t, prof, o, nil)
 	r, err := e.svc.CheckIn(context.Background(), e.user(t, "S"), CheckInInput{Token: e.token(t, prof, o, s), GPS: near()})
 	if err != nil || r.Status != "needs_review" || r.Reasons[0] != "no_session_anchor" {
 		t.Fatalf("%+v %v", r, err)
@@ -447,9 +458,9 @@ func TestReviewManualAndAudit(t *testing.T) {
 	ctx := context.Background()
 	prof := e.user(t, "P")
 	o := e.org(t, prof, "rev")
-	s := e.session(t, prof, o, anchor)
+	s := e.strictSession(t, prof, o, anchor)
 	stu := e.user(t, "S")
-	r, _ := e.svc.CheckIn(ctx, stu, CheckInInput{Token: e.token(t, prof, o, s)}) // no gps -> needs_review
+	r, _ := e.svc.CheckIn(ctx, stu, CheckInInput{Token: e.token(t, prof, o, s)}) // strict, no gps -> needs_review
 
 	if err := e.svc.ReviewRecord(ctx, prof, o.ID, *r.RecordID, "verified", "ab"); err == nil {
 		t.Fatal("short reason accepted")

@@ -21,6 +21,7 @@ type Config struct {
 	QRGraceSlots uint64
 	MaxFixAge    time.Duration
 	CORSOrigins  []string // exact origins allowed to call the API from a browser
+	WebDir       string   // optional: serve the web app from this directory
 }
 
 func Load() (Config, error) {
@@ -33,8 +34,9 @@ func Load() (Config, error) {
 		DevAuth:      os.Getenv("IAH_DEV_AUTH") == "1",
 		CheckinGrace: 5 * time.Second,
 		QRGraceSlots: 2,
-		MaxFixAge:    60 * time.Second,
+		MaxFixAge:    30 * time.Second, // strict mode only: GPS fixes older than this go to review
 		CORSOrigins:  splitList(os.Getenv("IAH_CORS_ORIGINS")),
+		WebDir:       os.Getenv("IAH_WEB_DIR"),
 	}
 	if v := os.Getenv("IAH_QR_GRACE_SLOTS"); v != "" {
 		n, err := strconv.ParseUint(v, 10, 8)

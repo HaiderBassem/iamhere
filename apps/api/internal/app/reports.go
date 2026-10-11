@@ -24,6 +24,9 @@ type AttendanceRow struct {
 	Method       string    `json:"method"`
 	CheckedInAt  time.Time `json:"checked_in_at"`
 	ManualReason *string   `json:"manual_reason,omitempty"`
+	// Reasons are the stable codes behind the status (e.g. gps_unavailable,
+	// visual_check_required), so a reviewer can see why a check-in was flagged.
+	Reasons []string `json:"reasons"`
 }
 
 type AttendanceCursor struct {
@@ -41,7 +44,8 @@ func (s *Service) ListAttendance(ctx context.Context, u User, orgID, sid uuid.UU
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
-	q := `SELECT id, user_id, full_name_snapshot, email_snapshot, phone_snapshot, status::text, method::text, checked_in_at, manual_reason
+	q := `SELECT id, user_id, full_name_snapshot, email_snapshot, phone_snapshot, status::text, method::text, checked_in_at, manual_reason,
+		ARRAY(SELECT jsonb_array_elements_text(COALESCE(evidence->'reasons','[]'::jsonb)))
 		FROM attendance_records WHERE org_id=$1 AND session_id=$2 `
 	args := []any{orgID, sid, limit}
 	if after != nil {
@@ -57,7 +61,7 @@ func (s *Service) ListAttendance(ctx context.Context, u User, orgID, sid uuid.UU
 	out := []AttendanceRow{}
 	for rows.Next() {
 		var r AttendanceRow
-		if err := rows.Scan(&r.ID, &r.UserID, &r.FullName, &r.Email, &r.Phone, &r.Status, &r.Method, &r.CheckedInAt, &r.ManualReason); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.FullName, &r.Email, &r.Phone, &r.Status, &r.Method, &r.CheckedInAt, &r.ManualReason, &r.Reasons); err != nil {
 			return nil, err
 		}
 		if !contacts {

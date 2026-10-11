@@ -62,7 +62,7 @@ func TestVenueBindingAndPrecedence(t *testing.T) {
 	if s3.LocationSource != "none" {
 		t.Fatalf("ambiguous venues must not bind: %+v", s3)
 	}
-	s4, err := e.svc.CreateSession(ctx, organizer, org.ID, CreateSessionInput{Title: "B", Anchor: anchor, VenueID: &hall2.ID})
+	s4, err := e.svc.CreateSession(ctx, organizer, org.ID, CreateSessionInput{Title: "B", Anchor: anchor, VenueID: &hall2.ID, Mode: "strict"})
 	if err != nil || s4.LocationSource != "venue" || *s4.VenueID != hall2.ID || s4.GPSRadiusM != 30 {
 		t.Fatalf("%+v %v", s4, err)
 	}

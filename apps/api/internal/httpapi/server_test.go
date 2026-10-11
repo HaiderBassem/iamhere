@@ -56,7 +56,7 @@ func newServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	svc := app.New(pool, app.Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: time.Minute})
-	h := New(svc, auth.Dev{}, slog.New(slog.NewTextHandler(io.Discard, nil)), pool.Ping)
+	h := New(svc, auth.Dev{}, slog.New(slog.NewTextHandler(io.Discard, nil)), pool.Ping, Options{})
 	ts := httptest.NewServer(h)
 	t.Cleanup(func() {
 		ts.Close()
@@ -145,7 +145,7 @@ func TestEndToEndJourney(t *testing.T) {
 
 	var q app.QRInfo
 	prof.json("GET", base+"/sessions/"+sess.ID.String()+"/qr", nil, 200, &q)
-	if q.Token == "" || q.RotationS != 10 {
+	if q.Token == "" || q.RotationS != 5 {
 		t.Fatalf("%+v", q)
 	}
 

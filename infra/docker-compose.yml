@@ -56,8 +56,10 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       IAH_DOMAIN: ${IAH_DOMAIN:?set IAH_DOMAIN}
+      IAH_AUTH_ORIGIN: ${IAH_AUTH_ORIGIN:?set IAH_AUTH_ORIGIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../apps/web/public:/srv/web:ro
       - caddy_data:/data
     networks: [private]
     logging: *logs

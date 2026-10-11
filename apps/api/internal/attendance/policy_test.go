@@ -3,14 +3,14 @@ package attendance
 import "testing"
 
 func TestDecide(t *testing.T) {
-	std := Policy{Mode: ModeStandard, RadiusM: 20, MaxAccuracyM: 100, MaxFixAgeS: 60, HasAnchor: true}
-	vis := std
-	vis.Mode = ModeVisual
-	vis.VisualAvailable = true
-	visNone := vis
-	visNone.VisualAvailable = false
-	noAnchor := std
+	strict := Policy{Mode: ModeStrict, RadiusM: 20, MaxAccuracyM: 100, MaxFixAgeS: 30, HasAnchor: true, VisualAvailable: true}
+	legacy := strict
+	legacy.Mode = ModeVisual
+	noPhotos := strict
+	noPhotos.VisualAvailable = false
+	noAnchor := strict
 	noAnchor.HasAnchor = false
+	normal := Policy{Mode: ModeStandard, RadiusM: 20, MaxAccuracyM: 100, MaxFixAgeS: 60}
 
 	g := func(dist, acc, age float64) GPSReading {
 		return GPSReading{Present: true, DistanceM: dist, AccuracyM: acc, AgeS: age}
@@ -24,19 +24,27 @@ func TestDecide(t *testing.T) {
 		want   Status
 		reason string
 	}{
-		{"inside, good accuracy", std, g(8, 10, 2), false, StatusVerified, ReasonGPSWithinRadius},
-		{"confidently outside", std, g(200, 10, 2), false, StatusRejected, ReasonOutsideRadius},
+		// normal mode: QR only, whatever the location evidence says (or lacks)
+		{"normal: no gps", normal, GPSReading{}, false, StatusVerified, ReasonQROnly},
+		{"normal: far away gps ignored", normal, g(5000, 5, 1), false, StatusVerified, ReasonQROnly},
+		{"normal: no anchor", normal, GPSReading{}, false, StatusVerified, ReasonQROnly},
+
+		// strict: GPS + photo
+		{"inside, photo matched", strict, g(8, 10, 2), true, StatusVerified, ReasonGPSWithinRadius},
+		{"confidently outside", strict, g(200, 10, 2), true, StatusRejected, ReasonOutsideRadius},
 		// 80m accuracy at 30m distance: could be inside; must not reject a genuine attendee
-		{"poor accuracy not rejected", std, g(30, 80, 2), false, StatusNeedsReview, ReasonUncertainEdge},
-		{"accuracy beyond ceiling", std, g(5, 500, 2), false, StatusNeedsReview, ReasonPoorAccuracy},
-		{"just outside but uncertain", std, g(25, 10, 2), false, StatusNeedsReview, ReasonUncertainEdge},
-		{"no gps", std, GPSReading{}, false, StatusNeedsReview, ReasonNoGPS},
-		{"stale fix", std, g(5, 5, 600), false, StatusNeedsReview, ReasonStaleFix},
-		{"no anchor", noAnchor, g(5, 5, 1), false, StatusNeedsReview, ReasonNoAnchor},
-		{"visual required, missing", vis, g(5, 5, 1), false, StatusNeedsReview, ReasonVisualRequired},
-		{"visual required, matched", vis, g(5, 5, 1), true, StatusVerified, ReasonGPSWithinRadius},
-		{"visual required, not configured", visNone, g(5, 5, 1), false, StatusNeedsReview, ReasonVisualNotSetUp},
-		{"outside beats visual match", vis, g(300, 5, 1), true, StatusRejected, ReasonOutsideRadius},
+		{"poor accuracy not rejected", strict, g(30, 80, 2), true, StatusNeedsReview, ReasonUncertainEdge},
+		{"accuracy beyond ceiling", strict, g(5, 500, 2), true, StatusNeedsReview, ReasonPoorAccuracy},
+		{"just outside but uncertain", strict, g(25, 10, 2), true, StatusNeedsReview, ReasonUncertainEdge},
+		{"no gps", strict, GPSReading{}, true, StatusNeedsReview, ReasonNoGPS},
+		{"stale fix", strict, g(5, 5, 600), true, StatusNeedsReview, ReasonStaleFix},
+		{"no anchor", noAnchor, g(5, 5, 1), true, StatusNeedsReview, ReasonNoAnchor},
+		{"photo missing", strict, g(5, 5, 1), false, StatusNeedsReview, ReasonVisualRequired},
+		{"photo does not match", strict, g(5, 5, 1), false, StatusNeedsReview, ReasonVisualRequired},
+		{"no reference photos for the place", noPhotos, g(5, 5, 1), false, StatusNeedsReview, ReasonVisualNotSetUp},
+		{"outside beats photo match", strict, g(300, 5, 1), true, StatusRejected, ReasonOutsideRadius},
+		{"legacy visual mode acts like strict", legacy, g(5, 5, 1), true, StatusVerified, ReasonGPSWithinRadius},
+		{"legacy visual mode needs photo", legacy, g(5, 5, 1), false, StatusNeedsReview, ReasonVisualRequired},
 	}
 	for _, c := range cases {
 		d := Decide(c.p, c.g, c.visual)
@@ -50,5 +58,11 @@ func TestDecide(t *testing.T) {
 		if !found {
 			t.Errorf("%s: reasons %v missing %s", c.name, d.Reasons, c.reason)
 		}
+	}
+}
+
+func TestModeChecked(t *testing.T) {
+	if ModeStandard.Checked() || !ModeStrict.Checked() || !ModeVisual.Checked() {
+		t.Fatal("only strict and legacy visual check location/photo")
 	}
 }
