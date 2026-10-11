@@ -1,4 +1,4 @@
-import { h, mount, icon, toast, confirmDialog, fmtTime, loading } from '../ui.js';
+import { h, mount, icon, confirmDialog, fmtTime, loading, loadScript } from '../ui.js';
 import { get, post, stream, download } from '../api.js';
 import { can, STATUS, modeLabel, reasonText, fail } from '../lib.js';
 
@@ -16,12 +16,12 @@ export function qrSvg(text) {
   return svg;
 }
 
-export default async function session({ page, params: [orgId, sid], orgById, refreshOrgs, navigate, setTitle, onCleanup, stale }) {
+export default async function session({ page, params: [orgId, sid], orgById, refreshOrgs, state, setTitle, onCleanup, stale }) {
   let org = orgById(orgId);
   if (!org) { await refreshOrgs(); org = orgById(orgId); }
   if (!org) throw new Error('Organization not found.');
   const base = `/v1/orgs/${orgId}/sessions/${sid}`;
-  let s = await get(base);
+  let [s] = await Promise.all([get(base), loadScript('/vendor/qrcode.js')]);
   if (stale()) return;
   setTitle(s.title);
 
@@ -37,6 +37,8 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
 
   const live = () => s.status === 'active';
   const showQR = () => live() && can.start(org.role);
+  // organizers may end their own sessions; admins and owners any session
+  const canEnd = () => live() && can.start(org.role) && (s.created_by === state.me.id || can.manage(org.role));
 
   // ---- static pieces ----------------------------------------------------------
   const verified = h('b', {}, s.verified_count), review = h('b', {}, s.needs_review_count);
@@ -71,7 +73,8 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
     h('button', { class: 'btn secondary small present-only', type: 'button', onClick: () => { unpresent(); document.exitFullscreen?.().catch(() => {}); } }, 'Exit'));
 
   const actions = h('div', { class: 'row wrap' });
-  const closed = h('div', { class: 'card stack-sm' });
+  const closedTitle = h('h2', {}), closedText = h('p', { class: 'muted' });
+  const closed = h('div', { class: 'card stack-sm' }, closedTitle, closedText);
 
   mount(page, h('div', { class: 'stack' },
     h('div', {},
@@ -83,24 +86,29 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
       h('div', { class: 'stack no-present' }, stats, actions)),
     h('section', { class: 'stack-sm no-present' }, h('h2', {}, 'Who is here'), rowsHost)));
 
+  // Text is updated in place every second; controls are rebuilt only when the
+  // session's state changes, so focus and in-flight clicks are never lost.
+  let shownState = null;
   function paintHeader() {
     status.className = 'chip ' + (live() ? 'ok' : '');
     status.textContent = live() ? 'Live' : 'Ended';
     verified.textContent = s.verified_count; pVerified.textContent = s.verified_count; review.textContent = s.needs_review_count;
     const ms = new Date(s.ends_at) - Date.now();
-    left.textContent = live() ? (ms > 0 ? `Ends in ${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}` : 'Ending…') : '';
+    left.textContent = live() ? (ms > 0 ? `Ends in ${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}` : 'Ending\u2026') : '';
+    closedTitle.textContent = live() ? 'Live now' : 'This session has ended';
+    closedText.textContent = `${s.verified_count} checked in${s.needs_review_count ? `, ${s.needs_review_count} waiting for review` : ''}${live() ? ' so far' : ''}.`;
+
+    if (shownState === s.status) return;
+    shownState = s.status;
     mount(actions,
-      live() && can.start(org.role) && h('button', { class: 'btn secondary', type: 'button', onClick: close }, 'End session'),
+      canEnd() && h('button', { class: 'btn secondary', type: 'button', onClick: close }, 'End session'),
       can.export(org.role) && h('button', { class: 'btn secondary', type: 'button', onClick: exportCsv }, icon('download'), 'Download list'),
       !live() && can.start(org.role) && h('a', { class: 'btn', href: `#/o/${orgId}` }, 'Start a new one'));
     if (!showQR()) {
       // either the session ended, or this person can watch but not show the QR
-      if (!live()) qrCard.remove();
+      qrCard.remove();
       if (!closed.isConnected) page.querySelector('.two-col > div').append(closed);
-      mount(closed,
-        h('h2', {}, live() ? 'Live now' : 'This session has ended'),
-        h('p', { class: 'muted' }, `${s.verified_count} checked in${s.needs_review_count ? `, ${s.needs_review_count} waiting for review` : ''}${live() ? ' so far' : ''}.`));
-      if (!live()) unpresent();
+      unpresent();
     }
   }
   paintHeader();

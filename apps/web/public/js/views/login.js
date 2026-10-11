@@ -18,7 +18,11 @@ export default async function login({ page, navigate, setTitle }) {
         e.preventDefault();
         if (!name.value.trim()) return;
         devLogin(name.value);
-        location.hash = '#/';
+        let back = '#/';
+        try { back = sessionStorage.getItem('iah.return') || '#/'; sessionStorage.removeItem('iah.return'); } catch { /* ignore */ }
+        // set the destination without firing a navigation (which would start
+        // requests that the reload then aborts), then start fresh signed in
+        history.replaceState(null, '', back);
         location.reload();
       },
     },

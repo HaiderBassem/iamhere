@@ -1,4 +1,4 @@
-import { h, mount, icon, toast } from '../ui.js';
+import { h, mount, loadScript } from '../ui.js';
 import { openCamera } from '../lib.js';
 
 // Pulls the check-in token out of a scanned QR: our link, or a bare token.
@@ -19,7 +19,7 @@ export default async function scan({ page, navigate, onCleanup, setTitle }) {
 
   let stop = () => {}, alive = true;
   onCleanup(() => { alive = false; stop(); });
-  try { stop = await openCamera(video, 'environment'); } catch (err) {
+  try { await loadScript('/vendor/jsQR.js'); stop = await openCamera(video, 'environment'); } catch (err) {
     return mount(page, h('div', { class: 'stack' }, h('h1', {}, 'Scan to check in'), h('div', { class: 'banner bad' }, err.message),
       h('p', { class: 'muted' }, 'You can still check in: open your phone’s camera app, scan the code on the screen, and tap the link.')));
   }

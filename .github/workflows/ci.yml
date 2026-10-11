@@ -112,6 +112,14 @@ jobs:
           BASE_URL: http://localhost:8080
           SHOTS: ${{ runner.temp }}/shots
         run: npm run e2e
+      - name: sign-in end-to-end (OIDC code + PKCE, refresh, logout; mock identity provider)
+        working-directory: apps/web
+        env:
+          API_BIN: ${{ runner.temp }}/iah-api
+          DATABASE_URL: postgres://postgres:dev@localhost:5432/iamhere_oidc?sslmode=disable
+        run: |
+          PGPASSWORD=dev psql -h localhost -U postgres -c 'CREATE DATABASE iamhere_oidc'
+          npm run e2e:oidc
       - name: API log (on failure)
         if: failure()
         run: tail -n 200 "$RUNNER_TEMP/api.log"

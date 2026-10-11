@@ -76,7 +76,7 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
 | Schema, migrations, QR, policy, sessions, check-in, RBAC, members, invitations, venues, settings, manual, review, CSV, history, deletion, SSE, rate limits, CORS | Implemented and tested (`go test -race ./...` against real PostGIS) |
 | HTTP routes | Tested end to end via `httptest` |
 | Compose config, Caddy routing | Compose config validates (API healthcheck gates Caddy). Image build and the full stack were **not** run in the last session (no Docker daemon). |
-| OIDC | Verified against a local mock provider (valid token, wrong client, expired, wrong issuer, forged signature). **Not yet run against a real Keycloak.** |
+| OIDC | API token checks tested against a mock provider (valid, wrong client, expired, wrong issuer, forged signature). The web app's sign-in (code + PKCE, return to the link that was opened, silent refresh, recovery from a rejected token, sign-out) is tested end to end in Chromium with the API in production mode against a mock provider (`npm run e2e:oidc`, also in CI). **Not yet run against a real Keycloak.** |
 | Live-binary run | Earlier build: migrations incl. upgrade, 300 concurrent attendees on one QR over HTTP → 300 verified/0 errors, ~0.4 s wall, p95 ≈ 160 ms (one dev machine; indicative only). Not repeated for the two-step strict flow (it is covered by a 60-way concurrent test) |
 | Web app (`apps/web`: organizer and attendee, no build step) | Tested in real Chromium end to end (`npm run e2e`, also in CI): normal and strict flows with a fake camera playing real scenes, mocked GPS, QR decoded from the screen, in-app scanner, review, CSV, invites, Kurdish names |
 | Visual presence check | Implemented and measured on synthetic scenes and through the browser camera pipeline. **The threshold is not calibrated on real classroom photos**; expect to tune `vision.MatchMaxDistance` once real data exists |
@@ -90,6 +90,13 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
   not proof. Strict raises the cost of cheating (5 s codes, 1-slot grace, fresh GPS, live photo); it does not make it
   impossible.
 - Normal mode deliberately checks nothing but the QR, so a code sent to a friend within ~10 s counts.
+- With 5-second codes, a first-time user who must sign in or register after scanning will usually be told the code
+  changed and asked to scan again (the sign-in round trip outlasts the code). Signed-in users are not affected.
+- Strict mode without a saved place with reference photos cannot verify anyone (everyone goes to review); the web app
+  warns before such a session is started.
+- `verification_attempts` (one row per attempt) and `audit_logs` grow without a retention policy. Decide how long to
+  keep attempts (e.g. delete after 90 days) before large-scale use.
+- PostgreSQL 15 or newer is required (migration 0003 uses `ON DELETE SET NULL (column)`); Compose ships 17.
 - Rate limits are in memory per process (fine for one server); there is no per-IP limit on unauthenticated traffic
   beyond Caddy/OS defaults.
 - User profile lookups happen on every request (one indexed query); add a short cache if profiling shows need.

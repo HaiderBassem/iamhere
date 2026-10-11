@@ -1,4 +1,4 @@
-import { h, mount, icon, toast, confirmDialog, loading, spinner } from '../ui.js';
+import { h, mount, icon, toast, confirmDialog, loading } from '../ui.js';
 import { get, post, del } from '../api.js';
 import { can, fail, getPosition, openCamera, captureFrame } from '../lib.js';
 import { orgHeader } from './org.js';
@@ -19,11 +19,15 @@ export default async function places({ page, params: [id], orgById, navigate, se
     const dlg = h('dialog', { 'aria-label': `Photos of ${venue.name}`, style: 'inline-size:min(520px,calc(100vw - 24px))' },
       h('div', { class: 'stack' }, h('h2', {}, `Photos of ${venue.name}`), h('div', { class: 'camera' }, video), status, shoot,
         h('button', { class: 'btn secondary', type: 'button', onClick: () => dlg.close() }, 'Done')));
-    let stop = () => {};
-    dlg.addEventListener('close', () => { stop(); dlg.remove(); paint(); });
+    let stop = () => {}, closed = false;
+    dlg.addEventListener('close', () => { closed = true; stop(); dlg.remove(); paint(); });
     document.body.append(dlg);
     dlg.showModal();
-    try { stop = await openCamera(video, 'environment'); } catch (err) { dlg.close(); return fail(err); }
+    try {
+      const release = await openCamera(video, 'environment');
+      if (closed) return release();          // closed while the camera was starting
+      stop = release;
+    } catch (err) { if (!closed) dlg.close(); return fail(err); }
     let count = venue.reference_count;
     shoot.addEventListener('click', async () => {
       shoot.disabled = true;

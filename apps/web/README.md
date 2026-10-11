@@ -39,6 +39,10 @@ Camera and location need HTTPS, except on `localhost`. Production: Caddy serves 
 cd apps/web && npm ci && npx playwright install chromium
 BASE_URL=http://localhost:8080 npm run e2e     # against a running API started as above
 ```
+Sign-in (OpenID Connect) has its own test, which starts a mock identity provider and the API in production mode:
+```sh
+API_BIN=/path/to/built/api DATABASE_URL='postgres://...' npm run e2e:oidc
+```
 The tests drive real Chromium: Chromium's fake camera plays generated "rooms", GPS is mocked per person, and the QR is
 decoded from the organizer's screen the way a phone would. Screenshots are written to `$SHOTS`.
 

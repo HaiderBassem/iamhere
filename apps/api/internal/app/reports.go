@@ -45,7 +45,7 @@ func (s *Service) ListAttendance(ctx context.Context, u User, orgID, sid uuid.UU
 		limit = 100
 	}
 	q := `SELECT id, user_id, full_name_snapshot, email_snapshot, phone_snapshot, status::text, method::text, checked_in_at, manual_reason,
-		ARRAY(SELECT jsonb_array_elements_text(COALESCE(evidence->'reasons','[]'::jsonb)))
+		ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(evidence->'reasons')='array' THEN evidence->'reasons' ELSE '[]'::jsonb END))
 		FROM attendance_records WHERE org_id=$1 AND session_id=$2 `
 	args := []any{orgID, sid, limit}
 	if after != nil {

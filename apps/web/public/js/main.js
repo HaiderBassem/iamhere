@@ -50,6 +50,8 @@ async function route() {
 
   if (view !== 'login' && !isSignedIn()) {
     if (authMode() === 'oidc') return login(hash);
+    // dev sign-in: come back to where the person was going (e.g. a check-in link)
+    try { if (hash !== '#/') sessionStorage.setItem('iah.return', hash); } catch { /* private mode */ }
     return navigate('#/login', { replace: true });
   }
 

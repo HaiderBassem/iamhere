@@ -387,3 +387,47 @@ func TestConcurrentStrictCheckins(t *testing.T) {
 		t.Fatalf("verified %d want %d", got.Verified, n)
 	}
 }
+
+// A person still in review who tries again must leave the reviewer the latest
+// evidence, not the first attempt's, and can still be upgraded by a good attempt.
+func TestReviewRetryKeepsLatestEvidence(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	prof := e.user(t, "P")
+	o := e.org(t, prof, "retry")
+	s, _ := e.strictVenueSession(t, prof, o)
+	stu := e.user(t, "stu")
+	reasonsOf := func() []string {
+		rows, err := e.svc.ListAttendance(ctx, prof, o.ID, s.ID, 10, nil)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("%v %v", rows, err)
+		}
+		return rows[0].Reasons
+	}
+
+	// 1st: no location -> review because of GPS
+	sc, _ := e.svc.Scan(ctx, stu, e.token(t, prof, o, s))
+	e.svc.CheckIn(ctx, stu, CheckInInput{Ticket: sc.Ticket, Photo: testPhoto(1, 0, 0)})
+	if r := reasonsOf(); !contains(r, "gps_unavailable") {
+		t.Fatalf("first attempt reasons: %v", r)
+	}
+	// 2nd: location now fine but wrong room -> still review, for the NEW reason
+	r, err := e.svc.CheckIn(ctx, stu, CheckInInput{Ticket: sc.Ticket, GPS: near(), Photo: testPhoto(7, 0, 0)})
+	if err != nil || r.Status != "needs_review" || !r.AlreadyRecorded {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if got := reasonsOf(); contains(got, "gps_unavailable") || !contains(got, "visual_check_required") {
+		t.Fatalf("reviewer sees stale reasons: %v", got)
+	}
+	// 3rd: everything right -> verified
+	r, _ = e.svc.CheckIn(ctx, stu, CheckInInput{Ticket: sc.Ticket, GPS: near(), Photo: testPhoto(1, 15, 5)})
+	if r.Status != "verified" {
+		t.Fatalf("upgrade: %+v", r)
+	}
+	// a reviewer's decision is never overwritten by a later attempt
+	e.svc.ReviewRecord(ctx, prof, o.ID, *r.RecordID, "revoked", "left early")
+	r, _ = e.svc.CheckIn(ctx, stu, CheckInInput{Ticket: sc.Ticket, GPS: near(), Photo: testPhoto(1, 0, 0)})
+	if r.Status != "revoked" {
+		t.Fatalf("organizer decision overwritten: %+v", r)
+	}
+}

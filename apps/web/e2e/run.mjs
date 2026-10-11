@@ -45,6 +45,12 @@ async function person(name, { room = 'a', geo = VENUE, desktop = false } = {}) {
     isMobile: !desktop, hasTouch: !desktop, deviceScaleFactor: 2, acceptDownloads: true,
     permissions: ['camera', 'geolocation'], geolocation: geo, locale: 'en-US',
   });
+  // record every camera stream, so tests can check the camera is always released
+  await ctx.addInitScript(() => {
+    window.__streams = [];
+    const gum = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+    if (gum) navigator.mediaDevices.getUserMedia = async (c) => { const st = await gum(c); window.__streams.push(st); return st; };
+  });
   const page = await ctx.newPage();
   page.errors = [];
   page.on('pageerror', (e) => page.errors.push(e.message));
@@ -56,9 +62,12 @@ async function person(name, { room = 'a', geo = VENUE, desktop = false } = {}) {
   return { name, ctx, page };
 }
 
+const liveTracks = (p) => p.page.evaluate(() => window.__streams.flatMap((st) => st.getTracks()).filter((t) => t.readyState === 'live').length);
+
 /** Reads the QR on screen the way a phone camera would. */
 async function readQR(page) {
   await page.locator('.qr-box:not(.stale) svg').waitFor();
+  if (!(await page.evaluate(() => !!window.jsQR))) await page.addScriptTag({ url: '/vendor/jsQR.js' });
   return page.evaluate(async () => {
     const xml = new XMLSerializer().serializeToString(document.querySelector('.qr-box svg'));
     const img = new Image();
@@ -182,6 +191,10 @@ try {
   await prof.page.getByRole('heading', { name: 'Room 204' }).waitFor();
   check(true, 'place saved from the organizer\'s current location');
   await prof.page.getByRole('button', { name: 'Add photo' }).click();
+  await prof.page.getByRole('button', { name: 'Done' }).click();            // close before the camera is even up
+  await sleep(1500);
+  check((await liveTracks(prof)) === 0, 'closing the photo dialog straight away still turns the camera off');
+  await prof.page.getByRole('button', { name: 'Add photo' }).click();
   await prof.page.getByRole('button', { name: 'Take photo' }).waitFor();
   await sleep(700);   // let the fake camera deliver frames
   await prof.page.getByRole('button', { name: 'Take photo' }).click();
@@ -265,6 +278,32 @@ try {
   await shot(prof, '37-live-strict-review');
   check(!(await prof.page.getByText('Eve Faraway').count()), 'a rejected attempt never becomes an attendance record');
 
+  await prof.page.getByRole('button', { name: 'Download list' }).focus();
+  await sleep(2500);
+  check(await prof.page.evaluate(() => document.activeElement?.textContent === 'Download list'),
+        'keyboard focus stays put on the live screen while it updates every second');
+
+  // someone in review can try again and get verified straight away
+  const gus = await person('Gus Retry', { room: 'a', geo: VENUE });
+  await gus.page.goto(await readQR(prof.page));
+  await gus.page.getByRole('button', { name: 'Share my location' }).click();
+  await gus.page.getByRole('button', { name: /^Skip/ }).click();           // skips the photo while the camera starts
+  await gus.page.getByRole('heading', { name: 'Sent to your organizer to review' }).waitFor();
+  await sleep(1000);
+  check((await liveTracks(gus)) === 0, 'skipping the photo turns the camera off');
+  await gus.page.goto(BASE + '/#/');                                        // comes back later, fresh from the camera app
+  await gus.page.getByRole('heading', { name: /Hi Gus/ }).waitFor();
+  await gus.page.goto(await readQR(prof.page));
+  await gus.page.getByText(/waiting for your organizer’s review/).waitFor();
+  await gus.page.getByRole('button', { name: 'Share my location' }).click();
+  await gus.page.getByRole('button', { name: 'Take photo' }).waitFor();
+  await sleep(700);
+  await gus.page.getByRole('button', { name: 'Take photo' }).click();
+  await gus.page.getByRole('heading', { name: /You’re checked in/ }).waitFor();
+  check(true, 'a person in review can retry and is verified by a good attempt');
+  await prof.page.locator('.stat.ok b').filter({ hasText: '3' }).waitFor({ timeout: 8000 });
+  check(true, 'the organizer\'s count follows (3 in)');
+
   // ---------------------------------------------------------------------------
   section('Team: invite by link');
   await prof.page.goto(orgUrl);
@@ -296,7 +335,7 @@ try {
   await prof.page.goto(BASE + '/#/');
   await shot(prof, '51-home-organizer');
 
-  const allErrors = [prof, ben, carla, dan, eve, fay, rev].flatMap((p) => p.page.errors);
+  const allErrors = [prof, ben, carla, dan, eve, fay, gus, rev].flatMap((p) => p.page.errors);
   check(allErrors.length === 0, 'no JavaScript errors in any browser' + (allErrors.length ? ': ' + allErrors.join(' | ') : ''));
 } catch (err) {
   failed++;

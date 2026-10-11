@@ -283,16 +283,18 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 		return res, tx.Commit(ctx)
 	}
 
-	// A verified retry may upgrade a needs_review record; nothing else is ever
-	// overwritten, so organizer decisions (rejected/revoked) stand.
+	// While a record is still in review, a new attempt replaces it: a verified
+	// one upgrades it, a needs_review one refreshes the evidence so the reviewer
+	// sees the latest reasons. Nothing else is ever overwritten, so verified
+	// records and organizer decisions (rejected/revoked) stand.
 	var id uuid.UUID
 	var stored string
 	var inserted bool
 	err = tx.QueryRow(ctx, `INSERT INTO attendance_records
 		(org_id, session_id, user_id, status, method, full_name_snapshot, email_snapshot, phone_snapshot, evidence, checked_in_at, updated_at)
 		VALUES($1,$2,$3,$4::attendance_status,'qr',$5,$6,$7,$8,$9,$9)
-		ON CONFLICT (session_id, user_id) DO UPDATE SET status='verified', evidence=EXCLUDED.evidence, updated_at=EXCLUDED.updated_at
-		  WHERE attendance_records.status='needs_review' AND EXCLUDED.status='verified'
+		ON CONFLICT (session_id, user_id) DO UPDATE SET status=EXCLUDED.status, evidence=EXCLUDED.evidence, updated_at=EXCLUDED.updated_at
+		  WHERE attendance_records.status='needs_review'
 		RETURNING id, status::text, (xmax = 0)`,
 		c.orgID, sid, u.ID, string(dec.Status), u.FullName, u.Email, u.Phone, evJSON, now).Scan(&id, &stored, &inserted)
 	if errors.Is(err, pgx.ErrNoRows) {

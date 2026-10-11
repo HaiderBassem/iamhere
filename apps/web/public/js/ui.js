@@ -111,3 +111,19 @@ export async function copyText(text) {
 }
 
 export const uuid = () => crypto.randomUUID();
+
+// Loads a vendored classic script once, on demand (the QR libraries are only
+// needed on the scanner and the live screen, not on every page load).
+const scripts = new Map();
+export function loadScript(src) {
+  if (!scripts.has(src)) {
+    scripts.set(src, new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => { scripts.delete(src); reject(new Error('Could not load part of the app. Check your connection.')); };
+      document.head.append(s);
+    }));
+  }
+  return scripts.get(src);
+}
