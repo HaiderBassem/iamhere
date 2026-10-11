@@ -94,17 +94,10 @@ func (s *Service) loadCheckinSession(ctx context.Context, sid uuid.UUID, lat, lo
 	return &c, nil
 }
 
-// qrGrace is how many past rotations a scanned code may be. Checked modes are
-// tighter: a relayed screenshot has to be forwarded within one rotation.
-func (s *Service) qrGrace(m attendance.Mode) uint64 {
-	if m.Checked() && s.opt.QRGraceSlots > 1 {
-		return 1
-	}
-	return s.opt.QRGraceSlots
-}
-
 func (s *Service) verifyQR(c *checkinSession, token string, now time.Time) error {
-	if err := qr.Verify(c.secret, c.id, token, now, time.Duration(c.rotation)*time.Second, s.qrGrace(c.mode)); err != nil {
+	// the code on the screen only: a replaced code stops working at once (apart
+	// from s.opt.QRAllowance for a request already on its way)
+	if err := qr.Verify(c.secret, c.id, token, now, time.Duration(c.rotation)*time.Second, s.opt.QRAllowance); err != nil {
 		if errors.Is(err, qr.ErrExpired) {
 			return newErr(410, "qr_expired", "That code just changed. Scan the code currently on the screen.")
 		}
@@ -408,9 +401,11 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 
 func round1(f float64) float64 { return math.Round(f*10) / 10 }
 
-// photoCodeGraceSlots is how old the code inside a strict-mode photo may be:
-// the photo is taken the moment the code is seen, then uploaded, so allow a
-// few rotations for slow connections (5 s rotation: 15-20 s).
+// photoCodeGraceSlots is how old the code inside a strict-mode photo may be.
+// This is not what registers anyone (the scanned code did, and had to be the
+// one on screen); the photo is evidence of being in the room, taken the moment
+// the code is seen, then uploaded, so allow a few rotations for slow
+// connections (5 s rotation: 15 s).
 const photoCodeGraceSlots = 3
 
 // codeInPhoto reports whether one of the codes read in the photo is a recent
@@ -425,7 +420,8 @@ func (s *Service) codeInPhoto(c *checkinSession, codes []string, now time.Time) 
 		if id, err := qr.SessionID(tok); err != nil || id != c.id {
 			continue
 		}
-		if qr.Verify(c.secret, c.id, tok, now, time.Duration(c.rotation)*time.Second, photoCodeGraceSlots) == nil {
+		rot := time.Duration(c.rotation) * time.Second
+		if qr.Verify(c.secret, c.id, tok, now, rot, photoCodeGraceSlots*rot) == nil {
 			return true
 		}
 	}

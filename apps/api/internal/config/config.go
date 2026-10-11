@@ -21,11 +21,13 @@ type Config struct {
 	MailDir      string // development: write emails to this directory instead of sending them
 	TrustProxy   bool   // the API is only reachable through the reverse proxy (client IP from X-Forwarded-For)
 	CheckinGrace time.Duration
-	QRGraceSlots uint64
-	MaxFixAge    time.Duration
-	CORSOrigins  []string // exact origins allowed to call the API from a browser
-	WebDir       string   // optional: serve the web app from this directory
-	VisionURL    string   // vision service for strict mode's photo check (empty = off)
+	// QRAllowance: a replaced code is still accepted this long, for a request
+	// that was sent while it was on screen. 0 = the current code only.
+	QRAllowance time.Duration
+	MaxFixAge   time.Duration
+	CORSOrigins []string // exact origins allowed to call the API from a browser
+	WebDir      string   // optional: serve the web app from this directory
+	VisionURL   string   // vision service for strict mode's photo check (empty = off)
 }
 
 func Load() (Config, error) {
@@ -40,18 +42,21 @@ func Load() (Config, error) {
 		MailDir:      os.Getenv("IAH_MAIL_DIR"),
 		TrustProxy:   os.Getenv("IAH_TRUST_PROXY") == "1",
 		CheckinGrace: 5 * time.Second,
-		QRGraceSlots: 2,
+		QRAllowance:  time.Second,
 		MaxFixAge:    30 * time.Second, // strict mode only: GPS fixes older than this go to review
 		CORSOrigins:  splitList(os.Getenv("IAH_CORS_ORIGINS")),
 		WebDir:       os.Getenv("IAH_WEB_DIR"),
 		VisionURL:    os.Getenv("IAH_VISION_URL"),
 	}
-	if v := os.Getenv("IAH_QR_GRACE_SLOTS"); v != "" {
-		n, err := strconv.ParseUint(v, 10, 8)
-		if err != nil {
-			return c, fmt.Errorf("IAH_QR_GRACE_SLOTS: %w", err)
+	if os.Getenv("IAH_QR_GRACE_SLOTS") != "" {
+		return c, errors.New("IAH_QR_GRACE_SLOTS was replaced by IAH_QR_ALLOWANCE_MS (an old code now stops working when the next one is shown)")
+	}
+	if v := os.Getenv("IAH_QR_ALLOWANCE_MS"); v != "" {
+		n, err := strconv.ParseUint(v, 10, 16)
+		if err != nil || n > 5000 {
+			return c, fmt.Errorf("IAH_QR_ALLOWANCE_MS must be 0-5000 (milliseconds), got %q", v)
 		}
-		c.QRGraceSlots = n
+		c.QRAllowance = time.Duration(n) * time.Millisecond
 	}
 	return c, c.Validate()
 }

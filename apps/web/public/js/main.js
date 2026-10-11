@@ -7,6 +7,24 @@ import { t, initI18n } from './i18n.js';
 import { holdScan } from './held.js';
 
 const root = document.getElementById('app');
+
+// A scanned code stops working as soon as the screen moves on to the next one,
+// so a check-in link sends its code before anything else loads (settings, the
+// page's own code): to check in, or to be held while an account is created.
+const early = (() => {
+  const m = /^#\/c\/([\w-]+)$/.exec(location.hash);
+  if (!m || m[1] === 'held') return null;
+  const token = m[1];
+  if (!isSignedIn()) return { token, hold: holdScan(token) };
+  return { token, scan: post('/v1/checkins/scan', { token }).then((ok) => ({ ok }), (err) => ({ err })) };
+})();
+/** The check-in already sent for this code at start-up, once. */
+function takeEarlyScan(token) {
+  if (early?.token !== token || !early.scan) return null;
+  const p = early.scan;
+  early.scan = null;
+  return p;
+}
 export const state = { me: null, orgs: null, account: null };
 
 // [pattern, view module, public?]. Order matters: first match wins.
@@ -61,7 +79,11 @@ async function route() {
   if (!pub && !signedIn) {
     rememberReturn(hash);                       // come back here after signing in (a check-in link, an invite)
     // a check-in link: hold the scan while the account is created, so there is no second scan
-    if (view === 'checkin') { mount(root, h('main', { class: 'public' }, loading())); await holdScan(match[1]); if (my !== token) return; }
+    if (view === 'checkin') {
+      mount(root, h('main', { class: 'public' }, loading()));
+      await (early?.hold && early.token === match[1] ? early.hold : holdScan(match[1]));
+      if (my !== token) return;
+    }
     return navigate(/^#\/(c|join)\//.test(hash) ? '#/signup' : '#/signin', { replace: true });
   }
   if (signedIn && ['signin', 'signup', 'forgot'].includes(view)) return navigate('#/', { replace: true });
@@ -84,7 +106,7 @@ async function route() {
     const mod = await import(`./views/${view}.js`);
     if (my !== token) return;
     const ctx = {
-      params: match.slice(1), page, navigate, state, refreshOrgs, orgById,
+      params: match.slice(1), page, navigate, state, refreshOrgs, orgById, takeEarlyScan,
       onCleanup: (fn) => cleanup.push(fn),
       stale: () => my !== token,
       setTitle: (title) => { document.title = title ? `${title} · ${brand.name}` : `${brand.name} · ${t(brand.tagline)}`; },

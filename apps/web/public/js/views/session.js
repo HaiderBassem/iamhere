@@ -179,19 +179,33 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
   }
 
   // ---- rotating QR ------------------------------------------------------------
+  // A code stops working the moment the next one is due, so the screen switches
+  // to the next code (sent ahead by the server) exactly on time instead of
+  // waiting for the network; then it fetches the following one.
   async function qrLoop() {
+    let shown = '', validUntil = 0;
+    const show = (token, ms) => {
+      if (token !== shown) { mount(qrBox, qrSvg(`${location.origin}/#/c/${token}`)); shown = token; }
+      qrBox.classList.remove('stale');
+      validUntil = performance.now() + ms;
+      bar.style.transition = 'none'; bar.style.transform = 'scaleX(1)'; void bar.offsetWidth;
+      bar.style.transition = `transform ${ms}ms linear`; bar.style.transform = 'scaleX(0)';
+    };
     while (alive && showQR() && live()) {
       let wait = 1500;
       try {
+        const sent = performance.now();
         const q = await get(`${base}/qr`);
         if (!alive) return;
-        qrBox.classList.remove('stale');
-        mount(qrBox, qrSvg(`${location.origin}/#/c/${q.token}`));
-        wait = Math.max(150, q.next_rotation_in_ms + 30);
-        bar.style.transition = 'none'; bar.style.transform = 'scaleX(1)'; void bar.offsetWidth;
-        bar.style.transition = `transform ${q.next_rotation_in_ms}ms linear`; bar.style.transform = 'scaleX(0)';
+        // the answer is half a round trip old when it arrives
+        const left = Math.max(0, q.next_rotation_in_ms - (performance.now() - sent) / 2);
+        show(q.token, left);
+        await new Promise((r) => later(r, left));
+        if (!alive || !live()) return;
+        show(q.next_token, q.rotation_s * 1000);
+        wait = 300;
       } catch (err) {
-        qrBox.classList.add('stale');
+        if (performance.now() > validUntil) qrBox.classList.add('stale');   // never show a code that no longer works
         if (err.code === 'session_ended') { s = await get(base); paintHeader(); refreshList(); return; }
         if (err.status === 404 || err.status === 403) return fail(err);
       }

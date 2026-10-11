@@ -193,7 +193,10 @@ func (s *Service) ListSessions(ctx context.Context, u User, orgID uuid.UUID, lim
 }
 
 type QRInfo struct {
-	Token       string    `json:"token"`
+	Token string `json:"token"`
+	// NextToken replaces Token in NextInMs: the screen switches to it on time,
+	// because Token stops working at that moment.
+	NextToken   string    `json:"next_token"`
 	NextInMs    int64     `json:"next_rotation_in_ms"`
 	RotationS   int       `json:"rotation_s"`
 	Status      string    `json:"status"`
@@ -201,7 +204,8 @@ type QRInfo struct {
 	ServerNowMs int64     `json:"server_now_ms"`
 }
 
-// SessionQR returns the token currently valid for the organizer's display.
+// SessionQR returns the code for the organizer's display now, and the one that
+// replaces it at the next rotation (only organizers ever see either).
 func (s *Service) SessionQR(ctx context.Context, u User, orgID, sid uuid.UUID) (QRInfo, error) {
 	if _, err := s.require(ctx, u, orgID, PermCreateSession); err != nil {
 		return QRInfo{}, err
@@ -225,7 +229,7 @@ func (s *Service) SessionQR(ctx context.Context, u User, orgID, sid uuid.UUID) (
 	d := time.Duration(rot) * time.Second
 	next := time.Unix(int64(qr.Slot(now, d)+1)*int64(rot), 0)
 	return QRInfo{
-		Token: qr.Sign(secret, sid, now, d), NextInMs: next.Sub(now).Milliseconds(), RotationS: rot,
+		Token: qr.Sign(secret, sid, now, d), NextToken: qr.Sign(secret, sid, next, d), NextInMs: next.Sub(now).Milliseconds(), RotationS: rot,
 		Status: status, EndsAt: ends, ServerNowMs: now.UnixMilli(),
 	}, nil
 }

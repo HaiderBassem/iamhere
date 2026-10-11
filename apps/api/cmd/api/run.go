@@ -75,7 +75,7 @@ func newService(pool *pgxpool.Pool, cfg config.Config, log *slog.Logger) (*app.S
 		public = "http://localhost" + cfg.ListenAddr
 	}
 	return app.New(pool, app.Options{
-		QRGraceSlots: cfg.QRGraceSlots,
+		QRAllowance:  cfg.QRAllowance,
 		CheckinGrace: cfg.CheckinGrace,
 		MaxFixAge:    cfg.MaxFixAge,
 		Vision:       vision.New(cfg.VisionURL),

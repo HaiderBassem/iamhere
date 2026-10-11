@@ -1,8 +1,8 @@
 // Package qr issues and verifies rotating, stateless QR tokens.
 //
 // A token is NOT single-use: hundreds of attendees scan the same displayed
-// code. It proves only "this request holds a code that was on the organizer's
-// screen within the last few rotations". It does not prove physical presence
+// code. It proves only "this request holds the code that is on the organizer's
+// screen right now" (an old code stops working the moment it is replaced). It does not prove physical presence
 // (screenshots and relays can forward it); that is the job of other evidence.
 package qr
 
@@ -67,10 +67,20 @@ func SessionID(token string) (uuid.UUID, error) {
 	return id, nil
 }
 
-// Verify checks the MAC in constant time and that the token's slot is no older
-// than `grace` slots (covers scan time + network delay) and not ahead of now
-// by more than one slot (clock skew between replicas).
-func Verify(secret []byte, sessionID uuid.UUID, token string, now time.Time, rotation time.Duration, grace uint64) error {
+// MaxSkew is how early a code may arrive before its slot starts: the clocks of
+// two API replicas may differ a little. It never makes an old code valid.
+const MaxSkew = 2 * time.Second
+
+// SlotStart is when slot begins.
+func SlotStart(slot uint64, rotation time.Duration) time.Time {
+	return time.Unix(int64(slot)*int64(rotation.Seconds()), 0)
+}
+
+// Verify checks the MAC in constant time and that the token is the code on the
+// screen now. A code stops being valid when the next one replaces it; only a
+// request that arrives within `allowance` of that moment (it was sent while the
+// code was still showing) is accepted. allowance 0 = the current code only.
+func Verify(secret []byte, sessionID uuid.UUID, token string, now time.Time, rotation, allowance time.Duration) error {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != tokenLen {
 		return ErrMalformed
@@ -85,13 +95,21 @@ func Verify(secret []byte, sessionID uuid.UUID, token string, now time.Time, rot
 		return ErrBadMAC
 	}
 	cur := Slot(now, rotation)
-	if slot > cur+1 {
+	switch {
+	case slot == cur:
+		return nil
+	case slot > cur:
+		if slot == cur+1 && SlotStart(slot, rotation).Sub(now) <= MaxSkew {
+			return nil
+		}
 		return ErrFuture
-	}
-	if cur > slot && cur-slot > grace {
+	default:
+		// replaced at the start of the slot after it
+		if now.Sub(SlotStart(slot+1, rotation)) <= allowance {
+			return nil
+		}
 		return ErrExpired
 	}
-	return nil
 }
 
 // ---- check-in tickets -------------------------------------------------------

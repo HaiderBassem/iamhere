@@ -108,7 +108,9 @@ func (r Role) Valid() bool { _, ok := rolePerms[r]; return ok }
 // ---- service --------------------------------------------------------------
 
 type Options struct {
-	QRGraceSlots uint64
+	// QRAllowance: how long a replaced code is still accepted (a request in
+	// flight when the screen changed). 0 = only the code on screen.
+	QRAllowance  time.Duration
 	CheckinGrace time.Duration
 	MaxFixAge    time.Duration
 	// Vision is the photo-check service client; nil means strict mode's photo

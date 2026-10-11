@@ -107,9 +107,18 @@ async function person(name, { room = 'a', geo = VENUE, desktop = false } = {}) {
 
 const liveTracks = (p) => p.page.evaluate(() => window.__streams.flatMap((st) => st.getTracks()).filter((t) => t.readyState === 'live').length);
 
-/** Reads the QR on screen the way a phone camera would. */
-async function readQR(page) {
+/** Waits until the organizer's screen shows a new code (the old one has just stopped working). */
+async function nextCode(page) {
   await page.locator('.qr-box:not(.stale) svg').waitFor();
+  const before = await page.evaluate(() => document.querySelector('.qr-box svg').outerHTML);
+  await page.waitForFunction((b) => document.querySelector('.qr-box svg')?.outerHTML !== b, before, { timeout: 15000 });
+}
+
+/** Reads the QR on screen the way a phone camera would. A code works only while it
+ *  is on the screen, so by default this waits for a fresh one (a full rotation left). */
+async function readQR(page, { fresh = true } = {}) {
+  await page.locator('.qr-box:not(.stale) svg').waitFor();
+  if (fresh) await nextCode(page);
   if (!(await page.evaluate(() => !!window.jsQR))) await page.addScriptTag({ url: '/vendor/jsQR.js' });
   return page.evaluate(async () => {
     const xml = new XMLSerializer().serializeToString(document.querySelector('.qr-box svg'));
@@ -167,11 +176,13 @@ try {
   const ben2 = await ben.page.goto(url2).then(() => ben.page.getByText(/already checked in/).waitFor().then(() => true));
   check(ben2, 'scanning again says "already checked in" (one record per person)');
 
-  await sleep(12000);
   const latecomer = await person('Late Lena');
-  await latecomer.page.goto(url1);
+  const replaced = await readQR(prof.page);
+  await nextCode(prof.page);                      // the screen moves on: that code must stop working at once
+  await sleep(1200);                              // (beyond the 1 s allowance for a request already on its way)
+  await latecomer.page.goto(replaced);
   await latecomer.page.getByRole('heading', { name: 'That code has changed' }).waitFor();
-  check(true, 'a code that is >2 rotations old is refused with a friendly "scan again"');
+  check(true, 'a code is refused as soon as the next one is on the screen, with a friendly "scan again"');
   await shot(latecomer, '22-expired');
   await latecomer.page.getByRole('link', { name: 'Scan again' }).click();
   await latecomer.page.getByRole('heading', { name: 'Scan to check in' }).waitFor();

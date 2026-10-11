@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestValidate(t *testing.T) {
 	cases := []struct {
@@ -28,5 +31,25 @@ func TestValidate(t *testing.T) {
 		if err := c.c.Validate(); (err == nil) != c.ok {
 			t.Errorf("%s: err=%v want ok=%v", c.name, err, c.ok)
 		}
+	}
+}
+
+func TestQRAllowance(t *testing.T) {
+	t.Setenv("IAH_DATABASE_URL", "postgres://x")
+	for _, c := range []struct {
+		env  string
+		want time.Duration
+		ok   bool
+	}{{"", time.Second, true}, {"0", 0, true}, {"250", 250 * time.Millisecond, true}, {"5001", 0, false}, {"-1", 0, false}, {"1s", 0, false}} {
+		t.Setenv("IAH_QR_ALLOWANCE_MS", c.env)
+		got, err := Load()
+		if (err == nil) != c.ok || (c.ok && got.QRAllowance != c.want) {
+			t.Errorf("%q: %v %v", c.env, got.QRAllowance, err)
+		}
+	}
+	t.Setenv("IAH_QR_ALLOWANCE_MS", "")
+	t.Setenv("IAH_QR_GRACE_SLOTS", "2") // replaced: say so instead of silently ignoring it
+	if _, err := Load(); err == nil {
+		t.Error("old setting accepted")
 	}
 }
