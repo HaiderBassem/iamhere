@@ -1,6 +1,7 @@
 import { h, mount, icon, toast, confirmDialog, loading } from '../ui.js';
 import { get, post, del } from '../api.js';
-import { can, fail, getPosition, openCamera, captureFrame } from '../lib.js';
+import { can, fail, getPosition } from '../lib.js';
+import { photoPanel, cameraShot } from '../photos.js';
 import { orgHeader } from './org.js';
 
 export default async function places({ page, params: [id], orgById, navigate, setTitle, onCleanup, stale }) {
@@ -11,33 +12,24 @@ export default async function places({ page, params: [id], orgById, navigate, se
   const body = h('div', { class: 'stack' }, loading());
   mount(page, orgHeader(o, '/places'), body);
 
-  // ---- camera dialog for reference photos ----------------------------------
-  async function photoDialog(venue) {
-    const video = h('video', { autoplay: true, playsinline: true, muted: true });
-    const status = h('p', { class: 'hint center' }, `Stand in the room and take 2–3 photos from different spots. ${venue.reference_count} so far.`);
-    const shoot = h('button', { class: 'btn big', type: 'button' }, icon('camera'), 'Take photo');
-    const dlg = h('dialog', { 'aria-label': `Photos of ${venue.name}`, style: 'inline-size:min(520px,calc(100vw - 24px))' },
-      h('div', { class: 'stack' }, h('h2', {}, `Photos of ${venue.name}`), h('div', { class: 'camera' }, video), status, shoot,
-        h('button', { class: 'btn secondary', type: 'button', onClick: () => dlg.close() }, 'Done')));
-    let stop = () => {}, closed = false;
-    dlg.addEventListener('close', () => { closed = true; stop(); dlg.remove(); paint(); });
-    document.body.append(dlg);
-    dlg.showModal();
+  // ---- "test from a seat": does a photo taken here match the saved photos? -----
+  async function testFromSeat(v) {
+    const shot = await cameraShot({ title: `Test ${v.name}`, hint: 'Sit where attendees sit and take a photo of the front of the room.' });
+    if (!shot) return;
     try {
-      const release = await openCamera(video, 'environment');
-      if (closed) return release();          // closed while the camera was starting
-      stop = release;
-    } catch (err) { if (!closed) dlg.close(); return fail(err); }
-    let count = venue.reference_count;
-    shoot.addEventListener('click', async () => {
-      shoot.disabled = true;
-      try {
-        await post(`/v1/orgs/${id}/venues/${venue.id}/references`, { photo: captureFrame(video) });
-        count++;
-        status.textContent = `✓ Saved. ${count} photo${count === 1 ? '' : 's'} for this place. Add another angle, or tap Done.`;
-      } catch (err) { status.textContent = err.message; }
-      shoot.disabled = false;
-    });
+      const r = await post(`/v1/orgs/${id}/venues/${v.id}/test`, { photo: shot });
+      const strong = r.matched && r.score >= 2 * r.threshold;
+      const pct = Math.min(100, Math.round((100 * r.score) / (2 * r.threshold)));
+      const color = r.matched ? 'var(--ok)' : 'var(--warn)';
+      await confirmDialog({
+        title: r.matched ? (strong ? 'Strong match ✓' : 'Match ✓') : 'Not recognized',
+        body: r.matched
+          ? (strong ? 'Photos from this seat will be recognized.' : 'Recognized, but only just. Add a photo taken from around this seat to make it reliable.')
+          : 'A photo from this seat does not match the saved photos. Add a photo taken from around here.',
+        confirm: 'OK', cancel: null,
+        extra: h('div', { class: 'meter', 'aria-hidden': 'true' }, h('i', { style: `inline-size:${pct}%;background:${color}` })),
+      });
+    } catch (err) { fail(err); }
   }
 
   // ---- add-a-place form -----------------------------------------------------
@@ -76,31 +68,36 @@ export default async function places({ page, params: [id], orgById, navigate, se
   async function paint() {
     const venues = await get(`/v1/orgs/${id}/venues`);
     if (stale()) return;
-    const cards = venues.items.map((v) => h('div', { class: 'card stack-sm' },
-      h('div', { class: 'row between' }, h('div', {}, h('h3', {}, v.name), h('div', { class: 'small muted' }, `Within ${v.radius_m} m`)),
-        v.reference_count > 0 ? h('span', { class: 'chip ok' }, `${v.reference_count} photo${v.reference_count === 1 ? '' : 's'}`) : h('span', { class: 'chip warn' }, 'No photos')),
-      v.reference_count === 0 && h('p', { class: 'hint' }, 'Strict mode compares attendees’ live photos with these. Add one to turn it on for this place.'),
-      h('div', { class: 'row wrap' },
-        h('button', { class: 'btn small', type: 'button', onClick: () => photoDialog(v) }, icon('camera'), 'Add photo'),
-        v.reference_count > 0 && h('button', {
-          class: 'btn secondary small', type: 'button',
-          onClick: async () => {
-            const refs = (await get(`/v1/orgs/${id}/venues/${v.id}/references`)).items;
-            const last = refs[refs.length - 1];
-            if (!last) return;
-            if (!(await confirmDialog({ title: 'Remove the latest photo?', confirm: 'Remove', danger: true }))) return;
-            try { await del(`/v1/orgs/${id}/venues/${v.id}/references/${last.id}`); paint(); } catch (err) { fail(err); }
-          },
-        }, 'Remove last photo'),
-        h('button', {
-          class: 'btn ghost small', type: 'button',
-          onClick: async () => {
-            if (!(await confirmDialog({ title: `Delete ${v.name}?`, body: 'Past sessions keep their records.', confirm: 'Delete', danger: true }))) return;
-            try { await del(`/v1/orgs/${id}/venues/${v.id}`); paint(); } catch (err) { fail(err); }
-          },
-        }, 'Delete'))));
+    const cards = venues.items.map((v) => {
+      const chip = h('span', { class: 'chip' });
+      // 3+ photos from different seats is what makes recognition reliable (docs/VISION.md)
+      const setCount = (n) => {
+        chip.className = 'chip ' + (n >= 3 ? 'ok' : 'warn');
+        chip.textContent = !n ? 'No photos' : n >= 3 ? `${n} photos` : `${n} photo${n === 1 ? '' : 's'} · add ${3 - n} more`;
+        testBtn.hidden = !n;
+      };
+      const testBtn = h('button', { class: 'btn secondary small', type: 'button', hidden: true, onClick: () => testFromSeat(v) }, 'Test from a seat');
+      const panel = photoPanel({
+        base: `/v1/orgs/${id}/venues/${v.id}/references`, orgId: id, max: 12, canEdit: true,
+        cameraTitle: `Photo of ${v.name}`,
+        cameraHint: 'Stand where attendees sit and photograph the front: the screen, the board and the walls around them. Take 3–4 from different seats.',
+        empty: 'Strict mode recognizes the room from these. Add 3–4 photos of the front, from different seats.',
+        onChange: setCount,
+      });
+      return h('div', { class: 'card stack-sm' },
+        h('div', { class: 'row between' }, h('div', {}, h('h3', {}, v.name), h('div', { class: 'small muted' }, `Within ${v.radius_m} m`)), chip),
+        panel,
+        h('div', { class: 'row wrap' }, testBtn,
+          h('button', {
+            class: 'btn ghost small', type: 'button',
+            onClick: async () => {
+              if (!(await confirmDialog({ title: `Delete ${v.name}?`, body: 'Past sessions keep their records.', confirm: 'Delete', danger: true }))) return;
+              try { await del(`/v1/orgs/${id}/venues/${v.id}`); paint(); } catch (err) { fail(err); }
+            },
+          }, 'Delete place')));
+    });
     mount(body,
-      h('p', { class: 'muted' }, 'Places are only needed for Strict mode. A saved place lets attendees be checked against the room itself.'),
+      h('p', { class: 'muted' }, 'Places are only needed for Strict mode. Strict mode checks attendees against the room itself, using the photos you save here (and any photo you take when a session starts).'),
       cards.length ? h('div', { class: 'stack' }, cards) : h('div', { class: 'empty' }, 'No places yet.'),
       addForm());
   }

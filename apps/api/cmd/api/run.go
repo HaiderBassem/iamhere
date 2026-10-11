@@ -16,6 +16,7 @@ import (
 	"github.com/iamhere/api/internal/config"
 	"github.com/iamhere/api/internal/db"
 	"github.com/iamhere/api/internal/httpapi"
+	"github.com/iamhere/api/internal/vision"
 )
 
 func run(log *slog.Logger) error {
@@ -43,7 +44,11 @@ func run(log *slog.Logger) error {
 		QRGraceSlots: cfg.QRGraceSlots,
 		CheckinGrace: cfg.CheckinGrace,
 		MaxFixAge:    cfg.MaxFixAge,
+		Vision:       vision.New(cfg.VisionURL),
 	})
+	if cfg.VisionURL == "" {
+		log.Warn("IAH_VISION_URL not set: strict mode's photo check is off (strict check-ins go to review)")
+	}
 	go expireLoop(ctx, svc, log)
 
 	return serve(ctx, cfg, httpapi.New(svc, ver, log, pool.Ping, httpapi.Options{CORSOrigins: cfg.CORSOrigins, Public: publicConfig(cfg), WebDir: cfg.WebDir}), log)
@@ -78,6 +83,9 @@ func expireLoop(ctx context.Context, svc *app.Service, log *slog.Logger) {
 		case <-t.C:
 			if _, err := svc.ExpireSessions(ctx); err != nil && ctx.Err() == nil {
 				log.Error("expire sessions", "err", err.Error())
+			}
+			if _, err := svc.PurgeSessionPhotos(ctx); err != nil && ctx.Err() == nil {
+				log.Error("purge session photos", "err", err.Error())
 			}
 		}
 	}

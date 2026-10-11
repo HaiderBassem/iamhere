@@ -1,6 +1,7 @@
 import { h, mount, icon, confirmDialog, fmtTime, loading, loadScript } from '../ui.js';
 import { get, post, stream, download } from '../api.js';
 import { can, STATUS, modeLabel, reasonText, fail } from '../lib.js';
+import { photoPanel } from '../photos.js';
 
 const REVIEW_REASON = { verified: 'Approved by reviewer', rejected: 'Rejected by reviewer', revoked: 'Revoked by reviewer' };
 
@@ -83,8 +84,31 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
         h('div', { class: 'row wrap' }, status, h('span', { class: 'chip brand' }, modeLabel(s.verification_mode)), left))),
     h('div', { class: 'two-col' },
       h('div', { class: 'stack' }, showQR() ? qrCard : closed),
-      h('div', { class: 'stack no-present' }, stats, actions)),
+      h('div', { class: 'stack no-present' }, stats, actions, todayCard())),
     h('section', { class: 'stack-sm no-present' }, h('h2', {}, 'Who is here'), rowsHost)));
+
+  // Strict sessions: "today's photo" of the room, the best reference there is
+  // (same day, same light, same layout). The place's saved photos are used too.
+  function todayCard() {
+    if (s.verification_mode === 'standard' || !canEnd()) return null;
+    const note = h('p', { class: 'hint' });
+    const panel = photoPanel({
+      base: `${base}/references`, orgId, max: 4, canEdit: true,
+      cameraTitle: 'Today’s photo of the room',
+      cameraHint: 'Stand where attendees sit and photograph the front with the screen showing the code. Take 2–3 from different seats if you can.',
+      empty: 'No photo of today yet.',
+      onChange: (n) => {
+        note.className = n || s.venue_id ? 'hint' : 'banner';
+        note.textContent = n
+          ? 'Attendees’ photos are compared with this' + (s.venue_id ? ' and the place’s saved photos.' : '.')
+          : s.venue_id
+            ? 'The place’s saved photos are used. A photo from today makes the check more reliable.'
+            : 'Strict mode needs photos of the room to recognize it: take 2–3 now from where attendees sit.';
+      },
+    });
+    onCleanup(() => panel.dispose());
+    return h('section', { class: 'card stack-sm' }, h('h2', {}, 'Today’s photo'), note, panel);
+  }
 
   // Text is updated in place every second; controls are rebuilt only when the
   // session's state changes, so focus and in-flight clicks are never lost.

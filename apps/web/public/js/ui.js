@@ -73,14 +73,15 @@ export function toast(message, kind = '') {
   setTimeout(() => t.remove(), kind === 'bad' ? 6000 : 3500);
 }
 
-export function confirmDialog({ title, body, confirm = 'Confirm', cancel = 'Cancel', danger = false }) {
+export function confirmDialog({ title, body, confirm = 'Confirm', cancel = 'Cancel', danger = false, extra = null }) {
   return new Promise((resolve) => {
     const d = h('dialog', { 'aria-labelledby': 'dlg-title' },
       h('form', { method: 'dialog', class: 'stack' },
         h('h2', { id: 'dlg-title' }, title),
         body && h('p', { class: 'muted' }, body),
+        extra,
         h('div', { class: 'row', style: 'justify-content:flex-end' },
-          h('button', { class: 'btn secondary', value: 'no' }, cancel),
+          cancel && h('button', { class: 'btn secondary', value: 'no' }, cancel),
           h('button', { class: 'btn ' + (danger ? 'danger' : ''), value: 'yes', autofocus: true }, confirm))));
     d.addEventListener('close', () => { resolve(d.returnValue === 'yes'); d.remove(); });
     document.body.append(d);

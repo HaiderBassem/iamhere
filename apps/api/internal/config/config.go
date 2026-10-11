@@ -22,6 +22,7 @@ type Config struct {
 	MaxFixAge    time.Duration
 	CORSOrigins  []string // exact origins allowed to call the API from a browser
 	WebDir       string   // optional: serve the web app from this directory
+	VisionURL    string   // vision service for strict mode's photo check (empty = off)
 }
 
 func Load() (Config, error) {
@@ -37,6 +38,7 @@ func Load() (Config, error) {
 		MaxFixAge:    30 * time.Second, // strict mode only: GPS fixes older than this go to review
 		CORSOrigins:  splitList(os.Getenv("IAH_CORS_ORIGINS")),
 		WebDir:       os.Getenv("IAH_WEB_DIR"),
+		VisionURL:    os.Getenv("IAH_VISION_URL"),
 	}
 	if v := os.Getenv("IAH_QR_GRACE_SLOTS"); v != "" {
 		n, err := strconv.ParseUint(v, 10, 8)

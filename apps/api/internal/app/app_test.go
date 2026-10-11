@@ -30,6 +30,7 @@ func adminURL() string {
 
 type env struct {
 	svc  *Service
+	vis  *fakeVision
 	pool *pgxpool.Pool
 	mu   sync.Mutex
 	now  time.Time
@@ -74,8 +75,9 @@ func newEnv(t *testing.T) *env {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	e := &env{pool: pool, now: time.Date(2030, 1, 1, 10, 0, 3, 0, time.UTC)}
-	e.svc = New(pool, Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: 30 * time.Second}) // production default for strict mode
+	e := &env{pool: pool, now: time.Date(2030, 1, 1, 10, 0, 3, 0, time.UTC), vis: newFakeVision(t)}
+	e.svc = New(pool, Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: 30 * time.Second, // production default for strict mode
+		Vision: e.vis.client})
 	e.svc.Now = e.clock
 	return e
 }
@@ -174,7 +176,7 @@ func TestGPSOutcomes(t *testing.T) {
 	o := e.org(t, prof, "gps")
 	s, _ := e.strictVenueSession(t, prof, o)
 	tok := e.token(t, prof, o, s)
-	photo := testPhoto(1, 20, 6) // the right place; isolates the GPS outcome
+	photo := probe("room-A", tok) // the right room with the current code; isolates the GPS outcome
 
 	cases := []struct {
 		name string

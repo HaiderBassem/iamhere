@@ -55,7 +55,7 @@ func newServer(t *testing.T) *httptest.Server {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	svc := app.New(pool, app.Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: time.Minute})
+	svc := app.New(pool, app.Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: time.Minute, Vision: newFakeVision(t).client})
 	h := New(svc, auth.Dev{}, slog.New(slog.NewTextHandler(io.Discard, nil)), pool.Ping, Options{})
 	ts := httptest.NewServer(h)
 	t.Cleanup(func() {

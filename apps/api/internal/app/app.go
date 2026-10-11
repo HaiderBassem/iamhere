@@ -19,6 +19,7 @@ import (
 	"github.com/nyaruka/phonenumbers"
 
 	"github.com/iamhere/api/internal/auth"
+	"github.com/iamhere/api/internal/vision"
 )
 
 // ---- errors ---------------------------------------------------------------
@@ -106,16 +107,20 @@ type Options struct {
 	QRGraceSlots uint64
 	CheckinGrace time.Duration
 	MaxFixAge    time.Duration
+	// Vision is the photo-check service client; nil means strict mode's photo
+	// check is not available on this server.
+	Vision *vision.Client
 }
 
 type Service struct {
 	pool *pgxpool.Pool
 	opt  Options
+	vis  *vision.Client
 	Now  func() time.Time // injectable clock; server-authoritative time
 }
 
 func New(pool *pgxpool.Pool, opt Options) *Service {
-	return &Service{pool: pool, opt: opt, Now: func() time.Time { return time.Now().UTC() }}
+	return &Service{pool: pool, opt: opt, vis: opt.Vision, Now: func() time.Time { return time.Now().UTC() }}
 }
 
 type dbq interface {

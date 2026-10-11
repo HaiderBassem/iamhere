@@ -50,10 +50,11 @@ export default async function org({ page, params: [id], orgById, state, navigate
       mount(note);
       if (mode === 'strict') {
         const v = venues.items.find((x) => x.id === venueSel.value);
-        if (venues.items.length === 0) note.append(h('div', { class: 'banner' }, 'Strict checks the room with photos. ', h('a', { href: `#/o/${id}/places` }, 'Add your place first'), ', or start now and everyone will go to review.'));
-        else if (v && v.reference_count === 0) note.append(h('div', { class: 'banner' }, 'This place has no reference photos yet, so the photo check cannot verify anyone. ', h('a', { href: `#/o/${id}/places` }, 'Add photos'), '.'));
-        else if (!v) note.append(h('div', { class: 'banner' }, 'Without a saved place, photos cannot be compared, so everyone will need your review. ', h('a', { href: `#/o/${id}/places` }, 'Add a place'), ' or pick one above.'));
-        else note.append(h('div', { class: 'hint' }, 'Attendees share their location and take a live photo of the room.'));
+        note.append(h('div', { class: 'hint' }, v
+          ? (v.reference_count
+              ? `Attendees share their location and photograph the screen. Compared with ${v.reference_count} saved photo${v.reference_count === 1 ? '' : 's'} of ${v.name} and today’s photo.`
+              : `${v.name} has no saved photos yet. After starting, take today’s photo of the room from where attendees sit.`)
+          : 'Your location marks the place. After starting, take today’s photo of the room from where attendees sit.'));
       }
     }
     venueSel.addEventListener('change', paint);

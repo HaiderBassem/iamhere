@@ -29,16 +29,21 @@ Camera and location need HTTPS, except on `localhost`. Production: Caddy serves 
 
 ## What it does
 - **Attendees**: scan the QR code on the screen with the phone's own camera (it opens the app) or with the in-app
-  scanner. *Normal* sessions check in at once. *Strict* sessions ask for location and a live photo of the room.
+  scanner. *Normal* sessions check in at once. *Strict* sessions ask for location and a photo of the screen with the code, taken by itself when the code is
+  in view; it must show the current code and the room (see `docs/VISION.md`).
 - **Organizers**: create an organization with just a name, tap *Start & show QR*, watch the count grow live, show the QR
   full screen on a projector, approve or reject flagged check-ins, download the list.
-- **Admins**: invite people with a link, save places with reference photos, set the default mode.
+- **Admins**: invite people with a link, save places with 3–4 reference photos (and test them from a seat), set the default mode.
 
 ## Test
 ```sh
 cd apps/web && npm ci && npx playwright install chromium
 BASE_URL=http://localhost:8080 npm run e2e     # against a running API started as above
 ```
+The strict-mode part needs the vision service (`apps/vision`, see `docs/VISION.md`) running and the API started
+with `IAH_VISION_URL=http://localhost:8090`; the fake camera feeds are generated with its Python
+(`VISION_PYTHON=/path/to/python`, default `python3`).
+
 Sign-in (OpenID Connect) has its own test, which starts a mock identity provider and the API in production mode:
 ```sh
 API_BIN=/path/to/built/api DATABASE_URL='postgres://...' npm run e2e:oidc

@@ -35,6 +35,7 @@ services:
       IAH_OIDC_ISSUER: ${IAH_OIDC_ISSUER:?set IAH_OIDC_ISSUER}
       IAH_OIDC_CLIENT_ID: ${IAH_OIDC_CLIENT_ID:?set IAH_OIDC_CLIENT_ID}
       IAH_CORS_ORIGINS: ${IAH_CORS_ORIGINS:-}
+      IAH_VISION_URL: http://vision:8090
     networks: [private]
     healthcheck:
       test: ["CMD", "/api", "healthcheck"]
@@ -46,6 +47,23 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 2g
+    logging: *logs
+
+  # Strict mode's photo check (room recognition + reading the code in the
+  # photo). Internal only; the API is its sole client. CPU only, ~1 core per
+  # concurrent check; raise IAH_VISION_WORKERS and cpus together.
+  vision:
+    build: ../apps/vision
+    restart: unless-stopped
+    environment:
+      IAH_VISION_WORKERS: ${IAH_VISION_WORKERS:-2}
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    cpus: ${IAH_VISION_CPUS:-2}
     logging: *logs
 
   caddy:
