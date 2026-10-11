@@ -31,7 +31,7 @@ jobs:
     env:
       TEST_PG_ADMIN_URL: postgres://postgres:dev@localhost:5432/postgres?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: apps/api/go.mod
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: build API image
         run: docker build -t iamhere-api apps/api
       - name: compose config validates
