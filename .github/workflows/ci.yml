@@ -83,14 +83,11 @@ jobs:
         env:
           POSTGRES_PASSWORD: ci
           IAH_DOMAIN: ci.example.org
-          IAH_OIDC_ISSUER: https://auth.example.org/realms/iamhere
-          IAH_OIDC_CLIENT_ID: iamhere-web
-          IAH_AUTH_ORIGIN: https://auth.example.org
         run: docker compose config -q
       - name: Caddyfile is valid
         run: |
           docker run --rm -v "$PWD/infra/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            -e IAH_DOMAIN=ci.example.org -e IAH_AUTH_ORIGIN=https://auth.example.org \
+            -e IAH_DOMAIN=ci.example.org \
             caddy:2 caddy validate --config /etc/caddy/Caddyfile
 
   web:
@@ -132,10 +129,10 @@ jobs:
           IAH_VISION_LISTEN=127.0.0.1:8090 IAH_VISION_WORKERS=2 python -m iahvision.server > "$RUNNER_TEMP/vision.log" 2>&1 &
           for i in $(seq 1 60); do curl -fsS localhost:8090/healthz && exit 0; sleep 1; done
           cat "$RUNNER_TEMP/vision.log"; exit 1
-      - name: build and start the API (serves the web app, dev sign-in)
+      - name: build and start the API (serves the web app; account emails go to a folder)
         run: |
           (cd apps/api && go build -o "$RUNNER_TEMP/iah-api" ./cmd/api)
-          IAH_DEV_AUTH=1 IAH_LISTEN=:8080 IAH_WEB_DIR="$PWD/apps/web/public" IAH_VISION_URL=http://127.0.0.1:8090 \
+          IAH_LISTEN=:8080 IAH_WEB_DIR="$PWD/apps/web/public" IAH_VISION_URL=http://127.0.0.1:8090 IAH_MAIL_DIR="$RUNNER_TEMP/mail" \
             IAH_DATABASE_URL='postgres://postgres:dev@localhost:5432/postgres?sslmode=disable' \
             "$RUNNER_TEMP/iah-api" > "$RUNNER_TEMP/api.log" 2>&1 &
           for i in $(seq 1 30); do curl -fsS localhost:8080/readyz && exit 0; sleep 1; done
@@ -149,15 +146,8 @@ jobs:
           BASE_URL: http://localhost:8080
           SHOTS: ${{ runner.temp }}/shots
           VISION_PYTHON: python
+          MAIL_DIR: ${{ runner.temp }}/mail
         run: npm run e2e
-      - name: sign-in end-to-end (OIDC code + PKCE, refresh, logout; mock identity provider)
-        working-directory: apps/web
-        env:
-          API_BIN: ${{ runner.temp }}/iah-api
-          DATABASE_URL: postgres://postgres:dev@localhost:5432/iamhere_oidc?sslmode=disable
-        run: |
-          PGPASSWORD=dev psql -h localhost -U postgres -c 'CREATE DATABASE iamhere_oidc'
-          npm run e2e:oidc
       - name: API and vision logs (on failure)
         if: failure()
         run: tail -n 200 "$RUNNER_TEMP/api.log" "$RUNNER_TEMP/vision.log"

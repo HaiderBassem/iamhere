@@ -2,8 +2,9 @@ import { h, mount, icon, confirmDialog, fmtTime, loading, loadScript } from '../
 import { get, post, stream, download } from '../api.js';
 import { can, STATUS, modeLabel, reasonText, fail } from '../lib.js';
 import { photoPanel } from '../photos.js';
+import { t, tn } from '../i18n.js';
 
-const REVIEW_REASON = { verified: 'Approved by reviewer', rejected: 'Rejected by reviewer', revoked: 'Revoked by reviewer' };
+const REVIEW_REASON = { verified: t('Approved by reviewer'), rejected: t('Rejected by reviewer'), revoked: t('Revoked by reviewer') };
 
 export function qrSvg(text) {
   const q = window.qrcode(0, 'M');
@@ -13,14 +14,14 @@ export function qrSvg(text) {
   const svg = document.importNode(doc.documentElement, true);
   svg.setAttribute('shape-rendering', 'crispEdges');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Attendance QR code');
+  svg.setAttribute('aria-label', t('Attendance QR code'));
   return svg;
 }
 
 export default async function session({ page, params: [orgId, sid], orgById, refreshOrgs, state, setTitle, onCleanup, stale }) {
   let org = orgById(orgId);
   if (!org) { await refreshOrgs(); org = orgById(orgId); }
-  if (!org) throw new Error('Organization not found.');
+  if (!org) throw new Error(t('Organization not found.'));
   const base = `/v1/orgs/${orgId}/sessions/${sid}`;
   let [s] = await Promise.all([get(base), loadScript('/vendor/qrcode.js')]);
   if (stale()) return;
@@ -45,14 +46,14 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
   const verified = h('b', {}, s.verified_count), review = h('b', {}, s.needs_review_count);
   const pVerified = h('b', {}, s.verified_count);
   const stats = h('div', { class: 'stats' },
-    h('div', { class: 'stat ok' }, verified, h('span', {}, 'Checked in')),
-    h('div', { class: 'stat warn' }, review, h('span', {}, 'To review')));
+    h('div', { class: 'stat ok' }, verified, h('span', {}, t('Checked in'))),
+    h('div', { class: 'stat warn' }, review, h('span', {}, t('To review'))));
   const left = h('span', { class: 'small muted' });
   const status = h('span', { class: 'chip' });
   const rowsHost = h('div', { class: 'list' }, loading());
   const qrBox = h('div', { class: 'qr-box stale' });
   const bar = h('i', { style: 'transform:scaleX(0)' });
-  const hint = h('p', { class: 'muted center small no-present' }, 'Scan with any camera. The code changes every few seconds.');
+  const hint = h('p', { class: 'muted center small no-present' }, t('Scan with any camera. The code changes every few seconds.'));
 
   const present = () => {
     document.body.classList.add('present');
@@ -69,9 +70,9 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
     h('div', { class: 'present-only present-title' }, s.title),
     qrBox, h('div', { class: 'timer', 'aria-hidden': 'true' }, bar), hint,
     h('div', { class: 'row wrap no-present', style: 'justify-content:center' },
-      h('button', { class: 'btn secondary', type: 'button', onClick: present }, icon('expand'), 'Show on projector')),
-    h('div', { class: 'present-only' }, h('div', { class: 'present-stats' }, pVerified, ' checked in')),
-    h('button', { class: 'btn secondary small present-only', type: 'button', onClick: () => { unpresent(); document.exitFullscreen?.().catch(() => {}); } }, 'Exit'));
+      h('button', { class: 'btn secondary', type: 'button', onClick: present }, icon('expand'), t('Show on projector'))),
+    h('div', { class: 'present-only' }, h('div', { class: 'present-stats' }, pVerified, t(' checked in'))),
+    h('button', { class: 'btn secondary small present-only', type: 'button', onClick: () => { unpresent(); document.exitFullscreen?.().catch(() => {}); } }, t('Exit')));
 
   const actions = h('div', { class: 'row wrap' });
   const closedTitle = h('h2', {}), closedText = h('p', { class: 'muted' });
@@ -85,7 +86,7 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
     h('div', { class: 'two-col' },
       h('div', { class: 'stack' }, showQR() ? qrCard : closed),
       h('div', { class: 'stack no-present' }, stats, actions, todayCard())),
-    h('section', { class: 'stack-sm no-present' }, h('h2', {}, 'Who is here'), rowsHost)));
+    h('section', { class: 'stack-sm no-present' }, h('h2', {}, t('Who is here')), rowsHost)));
 
   // Strict sessions: "today's photo" of the room, the best reference there is
   // (same day, same light, same layout). The place's saved photos are used too.
@@ -94,20 +95,20 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
     const note = h('p', { class: 'hint' });
     const panel = photoPanel({
       base: `${base}/references`, orgId, max: 4, canEdit: true,
-      cameraTitle: 'Today’s photo of the room',
-      cameraHint: 'Stand where attendees sit and photograph the front with the screen showing the code. Take 2–3 from different seats if you can.',
-      empty: 'No photo of today yet.',
+      cameraTitle: t('Today’s photo of the room'),
+      cameraHint: t('Stand where attendees sit and photograph the front with the screen showing the code. Take 2–3 from different seats if you can.'),
+      empty: t('No photo of today yet.'),
       onChange: (n) => {
         note.className = n || s.venue_id ? 'hint' : 'banner';
         note.textContent = n
-          ? 'Attendees’ photos are compared with this' + (s.venue_id ? ' and the place’s saved photos.' : '.')
+          ? t('Attendees’ photos are compared with this') + (s.venue_id ? t(' and the place’s saved photos.') : '.')
           : s.venue_id
-            ? 'The place’s saved photos are used. A photo from today makes the check more reliable.'
-            : 'Strict mode needs photos of the room to recognize it: take 2–3 now from where attendees sit.';
+            ? t('The place’s saved photos are used. A photo from today makes the check more reliable.')
+            : t('Strict mode needs photos of the room to recognize it: take 2–3 now from where attendees sit.');
       },
     });
     onCleanup(() => panel.dispose());
-    return h('section', { class: 'card stack-sm' }, h('h2', {}, 'Today’s photo'), note, panel);
+    return h('section', { class: 'card stack-sm' }, h('h2', {}, t('Today’s photo')), note, panel);
   }
 
   // Text is updated in place every second; controls are rebuilt only when the
@@ -115,19 +116,20 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
   let shownState = null;
   function paintHeader() {
     status.className = 'chip ' + (live() ? 'ok' : '');
-    status.textContent = live() ? 'Live' : 'Ended';
+    status.textContent = live() ? t('Live') : t('Ended');
     verified.textContent = s.verified_count; pVerified.textContent = s.verified_count; review.textContent = s.needs_review_count;
     const ms = new Date(s.ends_at) - Date.now();
-    left.textContent = live() ? (ms > 0 ? `Ends in ${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}` : 'Ending\u2026') : '';
-    closedTitle.textContent = live() ? 'Live now' : 'This session has ended';
-    closedText.textContent = `${s.verified_count} checked in${s.needs_review_count ? `, ${s.needs_review_count} waiting for review` : ''}${live() ? ' so far' : ''}.`;
+    left.textContent = live() ? (ms > 0 ? t('Ends in {time}', { time: `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}` }) : t('Ending\u2026')) : '';
+    closedTitle.textContent = live() ? t('Live now') : t('This session has ended');
+    closedText.textContent = (live() ? t('So far: {checked}', { checked: tn('{n} checked in', '{n} checked in', s.verified_count) }) : tn('{n} checked in', '{n} checked in', s.verified_count))
+      + (s.needs_review_count ? ' · ' + tn('{n} waiting for review', '{n} waiting for review', s.needs_review_count) : '');
 
     if (shownState === s.status) return;
     shownState = s.status;
     mount(actions,
-      canEnd() && h('button', { class: 'btn secondary', type: 'button', onClick: close }, 'End session'),
-      can.export(org.role) && h('button', { class: 'btn secondary', type: 'button', onClick: exportCsv }, icon('download'), 'Download list'),
-      !live() && can.start(org.role) && h('a', { class: 'btn', href: `#/o/${orgId}` }, 'Start a new one'));
+      canEnd() && h('button', { class: 'btn secondary', type: 'button', onClick: close }, t('End session')),
+      can.export(org.role) && h('button', { class: 'btn secondary', type: 'button', onClick: exportCsv }, icon('download'), t('Download list')),
+      !live() && can.start(org.role) && h('a', { class: 'btn', href: `#/o/${orgId}` }, t('Start a new one')));
     if (!showQR()) {
       // either the session ended, or this person can watch but not show the QR
       qrCard.remove();
@@ -139,7 +141,7 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
   later(function tick() { if (!alive) return; paintHeader(); later(tick, 1000); }, 1000);
 
   async function close() {
-    if (!(await confirmDialog({ title: 'End this session?', body: 'People will no longer be able to check in.', confirm: 'End session', danger: true }))) return;
+    if (!(await confirmDialog({ title: t('End this session?'), body: t('People will no longer be able to check in.'), confirm: t('End session'), danger: true }))) return;
     try { s = await post(`${base}/close`); paintHeader(); refreshList(); } catch (err) { fail(err); }
   }
   async function exportCsv() {
@@ -193,7 +195,7 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
   onCleanup(() => clearTimeout(listTimer));
 
   function paintRows(rows) {
-    if (!rows.length) return mount(rowsHost, h('div', { class: 'empty' }, live() ? 'Waiting for the first person…' : 'Nobody checked in.'));
+    if (!rows.length) return mount(rowsHost, h('div', { class: 'empty' }, live() ? t('Waiting for the first person…') : t('Nobody checked in.')));
     mount(rowsHost, rows.map((r) => {
       const st = STATUS[r.status] || STATUS.pending;
       const act = (to, label, cls) => h('button', { class: `btn small ${cls}`, type: 'button', onClick: () => review_(r.id, to) }, label);
@@ -201,13 +203,13 @@ export default async function session({ page, params: [orgId, sid], orgById, ref
         h('span', { class: 'dot ' + st.cls }),
         h('div', { class: 'grow who', style: 'display:grid' },
           h('div', { class: 'name' }, r.full_name),
-          h('div', { class: 'small muted' }, fmtTime(r.checked_in_at), r.method === 'manual' && ' · added by hand'),
+          h('div', { class: 'small muted' }, fmtTime(r.checked_in_at), r.method === 'manual' && t(' · added by hand')),
           r.status === 'needs_review' && reasonText(r.reasons) && h('div', { class: 'reasons' }, reasonText(r.reasons))),
         can.review(org.role)
           ? h('div', { class: 'row' },
-              r.status === 'needs_review' && [act('verified', 'Approve', 'ok'), act('rejected', 'Reject', 'secondary')],
-              r.status === 'verified' && act('revoked', 'Revoke', 'ghost'),
-              (r.status === 'rejected' || r.status === 'revoked') && act('verified', 'Approve', 'secondary'))
+              r.status === 'needs_review' && [act('verified', t('Approve'), 'ok'), act('rejected', t('Reject'), 'secondary')],
+              r.status === 'verified' && act('revoked', t('Revoke'), 'ghost'),
+              (r.status === 'rejected' || r.status === 'revoked') && act('verified', t('Approve'), 'secondary'))
           : h('span', { class: 'chip ' + st.cls }, st.label));
     }));
   }

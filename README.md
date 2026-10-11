@@ -3,8 +3,9 @@
 "I Am Here": QR- and GPS-based attendance for organizations. The backend is a Go modular monolith on
 PostgreSQL + PostGIS (`apps/api`), a framework-free web app (`apps/web`), a computer-vision service for strict mode
 (`apps/vision`, Python, CPU only), deployed with Docker Compose + Caddy (`infra`).
-Two modes: **Normal** (a QR code that changes every 5 seconds) and **Strict** (QR + GPS + a photo of the screen that
-must show the current code and the room).
+One account per person, used everywhere (built-in sign-up, sign-in, password reset). Two modes: **Normal** (a QR code
+that changes every 5 seconds) and **Strict** (QR + GPS + a photo of the screen that must show the current code and the
+room; each room is learned better with use).
 
 - Backend design, API reference, status and known limits: [`docs/BACKEND.md`](docs/BACKEND.md)
 - Web app (organizers and attendees, no build step), re-skinning guide: [`apps/web/README.md`](apps/web/README.md)

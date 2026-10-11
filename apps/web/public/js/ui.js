@@ -1,5 +1,6 @@
 // Tiny DOM helpers. Everything is built with textContent / attributes, never
 // innerHTML, so user-supplied names cannot inject markup.
+import { t } from './i18n.js';
 
 export function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -40,6 +41,16 @@ const PATHS = {
   pin: 'M12 21s7-6 7-11a7 7 0 1 0-14 0c0 5 7 11 7 11Zm0-8.500a2.500 2.500 0 1 0 0-5 2.500 2.500 0 0 0 0 5Z',
   camera: 'M4 8h3l1.500-2h7L17 8h3v11H4zM12 17a3.500 3.500 0 1 0 0-7 3.500 3.500 0 0 0 0 7Z',
   people: 'M9 11a3.500 3.500 0 1 0 0-7 3.500 3.500 0 0 0 0 7ZM2.500 20c.6-3.200 3-5 6.500-5s5.900 1.800 6.500 5M17 11a3 3 0 1 0 0-6M17.500 15c2.300.3 3.600 1.800 4 4.500',
+  logout: 'M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10',
+  mail: 'M4 6h16v12H4zM4 7l8 6 8-6',
+  eye: 'M2.500 12S6 5.500 12 5.500 21.500 12 21.500 12 18 18.500 12 18.500 2.500 12 2.500 12ZM12 14.500a2.500 2.500 0 1 0 0-5 2.500 2.500 0 0 0 0 5Z',
+  eyeOff: 'M3 3l18 18M10.600 6a9.800 9.800 0 0 1 1.400-.1c6 0 9.500 6.100 9.500 6.100a17 17 0 0 1-2.600 3.300M6.600 6.700C4 8.300 2.500 12 2.500 12S6 18.500 12 18.500a9 9 0 0 0 4.600-1.300M9.900 9.900a3 3 0 0 0 4.200 4.200',
+  shield: 'M12 3l7.500 3v5.500c0 4.600-3.200 8.300-7.500 9.500-4.300-1.200-7.500-4.900-7.500-9.500V6z',
+  arrow: 'M5 12h14M13 6l6 6-6 6',
+  qr: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2M14 18v2M18 18h2v2',
+  building: 'M4 20V5l8-2v17M12 9h8v11M7.500 8h1M7.500 12h1M7.500 16h1M15.500 13h1M15.500 16.500h1M2.500 20h19',
+  calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
+  sparkle: 'M12 3l1.800 5.200L19 10l-5.200 1.800L12 17l-1.800-5.200L5 10l5.200-1.800z',
 };
 export function icon(name) {
   const s = document.createElementNS(SVG, 'svg');
@@ -58,7 +69,7 @@ export function icon(name) {
   return s;
 }
 
-export const spinner = () => h('span', { class: 'spinner', role: 'status', 'aria-label': 'Loading' });
+export const spinner = () => h('span', { class: 'spinner', role: 'status', 'aria-label': t('Loading') });
 export const loading = () => h('div', { class: 'loading' }, spinner());
 
 // ---- toasts & dialogs ------------------------------------------------------
@@ -73,7 +84,7 @@ export function toast(message, kind = '') {
   setTimeout(() => t.remove(), kind === 'bad' ? 6000 : 3500);
 }
 
-export function confirmDialog({ title, body, confirm = 'Confirm', cancel = 'Cancel', danger = false, extra = null }) {
+export function confirmDialog({ title, body, confirm = t('Confirm'), cancel = t('Cancel'), danger = false, extra = null }) {
   return new Promise((resolve) => {
     const d = h('dialog', { 'aria-labelledby': 'dlg-title' },
       h('form', { method: 'dialog', class: 'stack' },
@@ -90,10 +101,11 @@ export function confirmDialog({ title, body, confirm = 'Confirm', cancel = 'Canc
 }
 
 // ---- formatting ------------------------------------------------------------
-const tf = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
-const df = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-export const fmtTime = (d) => tf.format(new Date(d));
-export const fmtDay = (d) => df.format(new Date(d));
+// in the browser's own conventions (date order, 12/24 h, numerals)
+const tf = () => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const df = () => new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+export const fmtTime = (d) => tf().format(new Date(d));
+export const fmtDay = (d) => df().format(new Date(d));
 export const fmtWhen = (d) => `${fmtDay(d)}, ${fmtTime(d)}`;
 
 export function initials(name) {
@@ -122,7 +134,7 @@ export function loadScript(src) {
       const s = document.createElement('script');
       s.src = src;
       s.onload = resolve;
-      s.onerror = () => { scripts.delete(src); reject(new Error('Could not load part of the app. Check your connection.')); };
+      s.onerror = () => { scripts.delete(src); reject(new Error(t('Could not load part of the app. Check your connection.'))); };
       document.head.append(s);
     }));
   }

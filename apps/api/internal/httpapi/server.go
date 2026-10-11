@@ -71,8 +71,10 @@ func New(svc *app.Service, log *slog.Logger, ready func(context.Context) error, 
 		checkins: newLimiterSet[uuid.UUID](rate.Every(3*time.Second), 10), // ~20/min sustained, burst 10
 		creates:  newLimiterSet[uuid.UUID](rate.Every(6*time.Second), 10),
 		accepts:  newLimiterSet[uuid.UUID](rate.Every(6*time.Second), 10),
-		signins:  newLimiterSet[string](rate.Every(6*time.Second), 20), // a classroom may share one IP (NAT)
-		signups:  newLimiterSet[string](rate.Every(6*time.Second), 30),
+		// a whole class may share one IP (school NAT) and sign up at once; guessing
+		// is limited per account (app.maxFailedSignIns), not just per IP
+		signins:  newLimiterSet[string](rate.Every(2*time.Second), 60),
+		signups:  newLimiterSet[string](rate.Every(2*time.Second), 60),
 		mails:    newLimiterSet[string](rate.Every(30*time.Second), 10),
 		links:    newLimiterSet[string](rate.Every(2*time.Second), 30),
 		sseEvery: 2 * time.Second,

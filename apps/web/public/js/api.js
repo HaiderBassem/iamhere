@@ -20,6 +20,20 @@ async function call(method, path, body, headers = {}) {
   return res;
 }
 
+/** A call that needs no sign-in (sign up, sign in, password reset links). */
+export async function publicPost(path, body) {
+  let res;
+  try {
+    res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    throw new ApiError(0, 'offline', 'No connection. Check your internet and try again.');
+  }
+  if (res.status === 204 || res.status === 202) return null;
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, data?.error || 'error', data?.message || 'Something went wrong. Please try again.');
+  return data;
+}
+
 export async function api(method, path, body, headers) {
   const res = await call(method, path, body, headers);
   if (res.status === 204) return null;
