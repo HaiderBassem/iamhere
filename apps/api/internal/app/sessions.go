@@ -35,9 +35,10 @@ func validCoord(lat, lon float64) bool {
 
 type CreateSessionInput struct {
 	Title          string
-	IdempotencyKey string  // lets a retried "Create & Display QR" return the same session
-	Anchor         *Anchor // organizer device position; optional
-	DurationS      int     // advanced; 0 = organization default
+	IdempotencyKey string     // lets a retried "Create & Display QR" return the same session
+	Anchor         *Anchor    // organizer device position; optional
+	VenueID        *uuid.UUID // registered venue; wins over Anchor
+	DurationS      int        // advanced; 0 = organization default
 }
 
 type Session struct {
@@ -53,12 +54,14 @@ type Session struct {
 	GPSRadiusM       int        `json:"gps_radius_m"`
 	QRRotationS      int        `json:"qr_rotation_s"`
 	HasAnchor        bool       `json:"has_anchor"`
+	LocationSource   string     `json:"location_source"` // none | organizer | venue | sole_venue
+	VenueID          *uuid.UUID `json:"venue_id,omitempty"`
 	Verified         int        `json:"verified_count"`
 	NeedsReview      int        `json:"needs_review_count"`
 }
 
 const sessionSelect = `SELECT s.id, s.org_id, s.created_by, s.title, s.status::text, s.starts_at, s.ends_at, s.closed_at,
-	s.verification_mode::text, s.gps_radius_m, s.qr_rotation_s, s.anchor IS NOT NULL,
+	s.verification_mode::text, s.gps_radius_m, s.qr_rotation_s, s.anchor IS NOT NULL, s.location_source, s.venue_id,
 	(SELECT count(*) FROM attendance_records r WHERE r.session_id=s.id AND r.status='verified'),
 	(SELECT count(*) FROM attendance_records r WHERE r.session_id=s.id AND r.status='needs_review')
 	FROM attendance_sessions s `
@@ -66,7 +69,7 @@ const sessionSelect = `SELECT s.id, s.org_id, s.created_by, s.title, s.status::t
 func (s *Service) scanSession(r pgx.Row) (Session, error) {
 	var x Session
 	err := r.Scan(&x.ID, &x.OrgID, &x.CreatedBy, &x.Title, &x.Status, &x.StartsAt, &x.EndsAt, &x.ClosedAt,
-		&x.VerificationMode, &x.GPSRadiusM, &x.QRRotationS, &x.HasAnchor, &x.Verified, &x.NeedsReview)
+		&x.VerificationMode, &x.GPSRadiusM, &x.QRRotationS, &x.HasAnchor, &x.LocationSource, &x.VenueID, &x.Verified, &x.NeedsReview)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -104,28 +107,31 @@ func (s *Service) CreateSession(ctx context.Context, u User, orgID uuid.UUID, in
 	if in.IdempotencyKey != "" {
 		key = &in.IdempotencyKey
 	}
-	var lat, lon, acc *float64
-	if a := in.Anchor; a != nil {
-		lat, lon, acc = &a.Lat, &a.Lon, &a.AccuracyM
+	loc, err := s.resolveLocation(ctx, orgID, in)
+	if err != nil {
+		return Session{}, err
 	}
 	now := s.Now()
 
 	var id uuid.UUID
 	err = s.pool.QueryRow(ctx, `INSERT INTO attendance_sessions
 		(org_id, created_by, title, starts_at, ends_at, verification_mode, gps_radius_m, max_gps_accuracy_m, qr_rotation_s,
-		 qr_secret, anchor, anchor_accuracy_m, idempotency_key)
+		 qr_secret, anchor, anchor_accuracy_m, idempotency_key, venue_id, location_source)
 		SELECT $1, $2, $3, $4::timestamptz,
 		       $4::timestamptz + make_interval(secs => COALESCE(NULLIF($5::int,0), st.default_duration_s)),
-		       st.verification_mode, st.gps_radius_m, st.max_gps_accuracy_m, st.qr_rotation_s, $6,
+		       st.verification_mode, COALESCE($11::int, st.gps_radius_m), st.max_gps_accuracy_m, st.qr_rotation_s, $6,
 		       CASE WHEN $7::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($8::float8,$7::float8),4326)::geography END,
-		       $9::float8, $10
+		       $9::float8, $10, $12::uuid, $13
 		FROM organization_settings st WHERE st.org_id=$1
 		ON CONFLICT (org_id, created_by, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 		RETURNING id`,
-		orgID, u.ID, title, now, in.DurationS, secret, lat, lon, acc, key).Scan(&id)
+		orgID, u.ID, title, now, in.DurationS, secret, loc.lat, loc.lon, loc.accuracy, key, loc.radiusM, loc.venueID, loc.source).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) && key != nil {
 		err = s.pool.QueryRow(ctx, `SELECT id FROM attendance_sessions WHERE org_id=$1 AND created_by=$2 AND idempotency_key=$3`,
 			orgID, u.ID, *key).Scan(&id)
+	}
+	if isFKViolation(err) { // venue deleted between resolution and insert
+		return Session{}, invalid("That venue does not exist.")
 	}
 	if err != nil {
 		return Session{}, err

@@ -52,6 +52,11 @@ func isUnique(err error) bool {
 	return errors.As(err, &pg) && pg.Code == "23505"
 }
 
+func isFKViolation(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "23503"
+}
+
 // ---- roles & permissions --------------------------------------------------
 
 type Role string

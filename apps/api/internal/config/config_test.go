@@ -13,6 +13,10 @@ func TestValidate(t *testing.T) {
 		{"no auth configured", Config{Env: "development", DatabaseURL: "x"}, false},
 		{"production forbids dev auth", Config{Env: "production", DatabaseURL: "x", DevAuth: true, OIDCIssuer: "https://k", OIDCClientID: "c"}, false},
 		{"production needs oidc client", Config{Env: "production", DatabaseURL: "x", OIDCIssuer: "https://k"}, false},
+		{"typo in env", Config{Env: "prod", DatabaseURL: "x", DevAuth: true}, false},
+		{"cors wildcard refused", Config{Env: "development", DatabaseURL: "x", DevAuth: true, CORSOrigins: []string{"*"}}, false},
+		{"cors trailing slash refused", Config{Env: "development", DatabaseURL: "x", DevAuth: true, CORSOrigins: []string{"https://a.org/"}}, false},
+		{"cors origin ok", Config{Env: "development", DatabaseURL: "x", DevAuth: true, CORSOrigins: []string{"https://a.org"}}, true},
 		{"production ok", Config{Env: "production", DatabaseURL: "x", OIDCIssuer: "https://k", OIDCClientID: "c"}, true},
 	}
 	for _, c := range cases {
