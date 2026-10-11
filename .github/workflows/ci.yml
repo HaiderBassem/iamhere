@@ -62,6 +62,7 @@ jobs:
           IAH_DOMAIN: ci.example.org
           IAH_OIDC_ISSUER: https://auth.example.org/realms/iamhere
           IAH_OIDC_CLIENT_ID: iamhere-web
+          IAH_AUTH_ORIGIN: https://auth.example.org
         run: docker compose config -q
       - name: Caddyfile is valid
         run: |
