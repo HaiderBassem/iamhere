@@ -46,7 +46,7 @@ func run(log *slog.Logger) error {
 	})
 	go expireLoop(ctx, svc, log)
 
-	return serve(ctx, cfg, httpapi.New(svc, ver, log, pool.Ping), log)
+	return serve(ctx, cfg, httpapi.New(svc, ver, log, pool.Ping, cfg.CORSOrigins...), log)
 }
 
 func openPool(ctx context.Context, url string) (*pgxpool.Pool, error) {

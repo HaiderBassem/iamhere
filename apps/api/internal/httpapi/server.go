@@ -31,19 +31,23 @@ type Server struct {
 	ready func(context.Context) error
 
 	checkins *limiterSet // per user
-	creates  *limiterSet // per user: sessions, orgs
+	creates  *limiterSet // per user: sessions, orgs, invites, venues
+	accepts  *limiterSet // per user: invite redemption
 	sseEvery time.Duration
 }
 
-func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(context.Context) error) http.Handler {
+// New builds the HTTP handler. corsOrigins lists exact browser origins that may
+// call the API cross-origin (empty = same-origin only).
+func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(context.Context) error, corsOrigins ...string) http.Handler {
 	s := &Server{
 		svc: svc, ver: ver, log: log, ready: ready,
 		checkins: newLimiterSet(rate.Every(3*time.Second), 10), // ~20/min sustained, burst 10
 		creates:  newLimiterSet(rate.Every(6*time.Second), 10),
+		accepts:  newLimiterSet(rate.Every(6*time.Second), 10),
 		sseEvery: 2 * time.Second,
 	}
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, s.recoverer, s.accessLog, secureHeaders)
+	r.Use(middleware.RequestID, s.recoverer, s.accessLog, secureHeaders, cors(corsOrigins))
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +72,7 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 			r.Delete("/me", s.h(s.deleteMe))
 			r.Get("/me/attendance", s.h(s.myHistory))
 			r.Post("/checkins", s.h(s.checkIn))
+			r.Post("/invites/accept", s.h(s.acceptInvite))
 
 			r.Get("/orgs", s.h(s.listOrgs))
 			r.Post("/orgs", s.h(s.createOrg))
@@ -77,6 +82,12 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 				r.Get("/members", s.h(s.listMembers))
 				r.Put("/members/{uid}", s.h(s.setMember))
 				r.Delete("/members/{uid}", s.h(s.removeMember))
+				r.Get("/invites", s.h(s.listInvites))
+				r.Post("/invites", s.h(s.createInvite))
+				r.Delete("/invites/{iid}", s.h(s.revokeInvite))
+				r.Get("/venues", s.h(s.listVenues))
+				r.Post("/venues", s.h(s.createVenue))
+				r.Delete("/venues/{vid}", s.h(s.deleteVenue))
 
 				r.Get("/sessions", s.h(s.listSessions))
 				r.Post("/sessions", s.h(s.createSession))
@@ -131,6 +142,51 @@ func secureHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// cors answers browser preflights and tags responses for allow-listed origins.
+// Authentication is a bearer header (no cookies), so credentials are never
+// shared with the page and an exact-origin allow-list is sufficient.
+func cors(origins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(origins))
+	for _, o := range origins {
+		allowed[o] = true
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if len(allowed) == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// The response varies by Origin whether or not one was sent, so a
+			// shared cache can never replay one origin's headers to another.
+			w.Header().Add("Vary", "Origin")
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !allowed[origin] {
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Access-Control-Expose-Headers", "Retry-After, Content-Disposition")
+			if r.Method == http.MethodOptions {
+				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE")
+				h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
+				h.Set("Access-Control-Max-Age", "600")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 type statusWriter struct {
 	http.ResponseWriter
 	status int
@@ -157,10 +213,15 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 func (s *Server) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if v := recover(); v != nil && v != http.ErrAbortHandler {
-				s.log.Error("panic", "value", fmt.Sprint(v), "id", middleware.GetReqID(r.Context()))
-				writeJSON(w, 500, errBody{"internal", "Something went wrong."})
+			v := recover()
+			if v == nil {
+				return
 			}
+			if v == http.ErrAbortHandler {
+				panic(v) // deliberate abort (e.g. truncated CSV): let net/http reset the connection
+			}
+			s.log.Error("panic", "value", fmt.Sprint(v), "id", middleware.GetReqID(r.Context()))
+			writeJSON(w, 500, errBody{"internal", "Something went wrong."})
 		}()
 		next.ServeHTTP(w, r)
 	})
@@ -465,6 +526,136 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, u app.User
 	return nil
 }
 
+// ---- handlers: invites & venues -------------------------------------------
+
+func (s *Server) createInvite(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	if !s.creates.allow(u.ID) {
+		return app.TooMany()
+	}
+	var in struct {
+		Role           app.Role `json:"role"`
+		ExpiresInHours int      `json:"expires_in_hours"`
+	}
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	if in.ExpiresInHours < 0 || in.ExpiresInHours > 24*365 {
+		return app.BadRequest("Expiry must be between 1 hour and 30 days.")
+	}
+	inv, err := s.svc.CreateInvite(r.Context(), u, org, in.Role, time.Duration(in.ExpiresInHours)*time.Hour)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 201, inv)
+	return nil
+}
+
+func (s *Server) listInvites(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	items, err := s.svc.ListInvites(r.Context(), u, org)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+	return nil
+}
+
+func (s *Server) revokeInvite(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	iid, err := uuidParam(r, "iid")
+	if err != nil {
+		return err
+	}
+	if err := s.svc.RevokeInvite(r.Context(), u, org, iid); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (s *Server) acceptInvite(w http.ResponseWriter, r *http.Request, u app.User) error {
+	if !s.accepts.allow(u.ID) {
+		w.Header().Set("Retry-After", "6")
+		return app.TooMany()
+	}
+	var in struct {
+		Token string `json:"token"`
+	}
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	o, err := s.svc.AcceptInvite(r.Context(), u, in.Token)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, o)
+	return nil
+}
+
+func (s *Server) createVenue(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	if !s.creates.allow(u.ID) {
+		return app.TooMany()
+	}
+	var in struct {
+		Name    string  `json:"name"`
+		Lat     float64 `json:"lat"`
+		Lon     float64 `json:"lon"`
+		RadiusM int     `json:"radius_m"`
+	}
+	if err := decode(w, r, &in); err != nil {
+		return err
+	}
+	v, err := s.svc.CreateVenue(r.Context(), u, org, in.Name, in.Lat, in.Lon, in.RadiusM)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 201, v)
+	return nil
+}
+
+func (s *Server) listVenues(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	items, err := s.svc.ListVenues(r.Context(), u, org)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+	return nil
+}
+
+func (s *Server) deleteVenue(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, err := uuidParam(r, "org")
+	if err != nil {
+		return err
+	}
+	vid, err := uuidParam(r, "vid")
+	if err != nil {
+		return err
+	}
+	if err := s.svc.DeleteVenue(r.Context(), u, org, vid); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 // ---- handlers: sessions ---------------------------------------------------
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request, u app.User) error {
@@ -478,13 +669,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, u app.Use
 	var in struct {
 		Title     string      `json:"title"`
 		Anchor    *app.Anchor `json:"anchor"`
+		VenueID   *uuid.UUID  `json:"venue_id"`
 		DurationS int         `json:"duration_s"`
 	}
 	if err := decode(w, r, &in); err != nil {
 		return err
 	}
 	sess, err := s.svc.CreateSession(r.Context(), u, org, app.CreateSessionInput{
-		Title: in.Title, Anchor: in.Anchor, DurationS: in.DurationS, IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		Title: in.Title, Anchor: in.Anchor, VenueID: in.VenueID, DurationS: in.DurationS, IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
 		return err

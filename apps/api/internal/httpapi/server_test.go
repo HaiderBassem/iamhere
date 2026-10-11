@@ -37,6 +37,9 @@ func newServer(t *testing.T) *httptest.Server {
 		err = admin.Ping(ctx)
 	}
 	if err != nil {
+		if os.Getenv("CI") != "" { // a missing database must fail CI, never skip silently
+			t.Fatalf("test postgres unavailable in CI: %v", err)
+		}
 		t.Skipf("no test postgres available: %v", err)
 	}
 	name := "iah_h_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]

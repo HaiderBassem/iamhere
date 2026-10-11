@@ -34,7 +34,14 @@ services:
       IAH_DATABASE_URL: postgres://iamhere:${POSTGRES_PASSWORD}@db:5432/iamhere?sslmode=disable
       IAH_OIDC_ISSUER: ${IAH_OIDC_ISSUER:?set IAH_OIDC_ISSUER}
       IAH_OIDC_CLIENT_ID: ${IAH_OIDC_CLIENT_ID:?set IAH_OIDC_CLIENT_ID}
+      IAH_CORS_ORIGINS: ${IAH_CORS_ORIGINS:-}
     networks: [private]
+    healthcheck:
+      test: ["CMD", "/api", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -44,7 +51,8 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
-    depends_on: [api]
+    depends_on:
+      api: { condition: service_healthy }
     ports: ["80:80", "443:443"]
     environment:
       IAH_DOMAIN: ${IAH_DOMAIN:?set IAH_DOMAIN}
