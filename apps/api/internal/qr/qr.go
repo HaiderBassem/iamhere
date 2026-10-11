@@ -164,3 +164,58 @@ func VerifyTicket(secret []byte, sessionID, userID uuid.UUID, ticket string, now
 	}
 	return nil
 }
+
+// ---- sign-up claims ---------------------------------------------------------
+//
+// Someone without an account scans the code, then needs about 20 seconds to
+// create one: longer than the code lives. A claim holds that fresh scan through
+// sign-up. It is bound to the session but not to a user (there is none yet), so
+// it is only accepted together with the creation of a new account, and only
+// for ClaimTTL. Domain separation keeps claims, codes and tickets apart even
+// though a claim has the same length as a code.
+
+const claimDomain = "iah-claim-v1"
+
+// ClaimTTL is how long a scan is held while the person creates an account.
+const ClaimTTL = 5 * time.Minute
+
+func claimMAC(secret []byte, sessionID uuid.UUID, exp uint64) []byte {
+	h := hmac.New(sha256.New, secret)
+	h.Write([]byte(claimDomain))
+	h.Write(sessionID[:])
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], exp)
+	h.Write(b[:])
+	return h.Sum(nil)[:macLen]
+}
+
+// SignClaim issues a claim on the session valid until now+ClaimTTL.
+func SignClaim(secret []byte, sessionID uuid.UUID, now time.Time) string {
+	exp := uint64(now.Add(ClaimTTL).Unix())
+	buf := make([]byte, 0, tokenLen)
+	buf = append(buf, sessionID[:]...)
+	buf = binary.BigEndian.AppendUint64(buf, exp)
+	buf = append(buf, claimMAC(secret, sessionID, exp)...)
+	return base64.RawURLEncoding.EncodeToString(buf)
+}
+
+// ClaimSessionID extracts the (unauthenticated) session id; confirm with VerifyClaim.
+func ClaimSessionID(claim string) (uuid.UUID, error) { return SessionID(claim) }
+
+// VerifyClaim checks the MAC in constant time and the expiry.
+func VerifyClaim(secret []byte, sessionID uuid.UUID, claim string, now time.Time) error {
+	raw, err := base64.RawURLEncoding.DecodeString(claim)
+	if err != nil || len(raw) != tokenLen {
+		return ErrMalformed
+	}
+	var sid uuid.UUID
+	copy(sid[:], raw[:16])
+	exp := binary.BigEndian.Uint64(raw[16:24])
+	if sid != sessionID || !hmac.Equal(raw[24:], claimMAC(secret, sessionID, exp)) {
+		return ErrBadMAC
+	}
+	if uint64(now.Unix()) > exp {
+		return ErrExpired
+	}
+	return nil
+}

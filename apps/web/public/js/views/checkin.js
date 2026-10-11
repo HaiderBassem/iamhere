@@ -1,20 +1,31 @@
-import { h, mount, icon, fmtTime, loadScript } from '../ui.js';
+import { h, mount, icon, fmtWhen, loadScript } from '../ui.js';
 import { post } from '../api.js';
 import { getPosition, openCamera, captureJPEG, watchForCode, takePendingCapture, reasonText, tokenFrom, sameSession } from '../lib.js';
 import { t } from '../i18n.js';
 import { arrivedFromSignIn } from '../auth.js';
+import { takeHeldResult } from '../held.js';
 
-export default async function checkin({ page, params: [token], navigate, onCleanup, setTitle, stale }) {
+// #/c/<code> is a scanned code; #/c/held continues a check-in held through sign-up.
+export default async function checkin({ page, params: [token], navigate, onCleanup, setTitle, stale, state }) {
   setTitle(t('Check in'));
   let stopCam = () => {};
   onCleanup(() => stopCam());
   const show = (...kids) => { stopCam(); stopCam = () => {}; mount(page, h('div', { class: 'stack' }, kids)); };
   const working = (text) => show(h('div', { class: 'loading stack-sm center' }, h('span', { class: 'spinner' }), h('p', { class: 'muted' }, text)));
 
-  working(t('Checking the code…'));
   let scan;
-  try { scan = await post('/v1/checkins/scan', { token }); } catch (err) { return problem(err); }
-  if (stale()) return;
+  if (token === 'held') {
+    const held = takeHeldResult();
+    if (!held) return navigate('#/', { replace: true });  // reloaded: nothing held any more
+    if (!held.checkin) return problem({ code: held.error?.error, message: held.error?.message || t('Something went wrong.') });
+    scan = held.checkin;
+  } else {
+    working(t('Checking the code…'));
+    try { scan = await post('/v1/checkins/scan', { token }); } catch (err) { return problem(err); }
+    if (stale()) return;
+  }
+  // identifies the session in a photographed code (a ticket starts like the code it came from)
+  const ref = token === 'held' ? scan.ticket : token;
   setTitle(scan.session_title);
   const need = { gps: scan.needs_gps, photo: scan.needs_photo };
   // Someone still waiting for review may try again (a good attempt verifies
@@ -81,7 +92,7 @@ export default async function checkin({ page, params: [token], navigate, onClean
       clearTimeout(reveal); stopCam(); stopCam = () => {}; next('photo');
     });
     // only this session's code proves anything (another session's screen may be in view)
-    watch = watchForCode(video, { accept: (text) => sameSession(tokenFrom(text), token) });
+    watch = watchForCode(video, { accept: (text) => sameSession(tokenFrom(text), ref) });
     const found = await watch.promise;
     clearTimeout(reveal);
     if (stale() || !video.isConnected || !found) return;
@@ -114,28 +125,48 @@ export default async function checkin({ page, params: [token], navigate, onClean
   }
 
   // fromScan: the person was already recorded before this visit.
+  // Checked in (or waiting for review) is shown as a pass with a stamp: the
+  // one moment the product celebrates. Anything else says what to do next.
   function result(r, fromScan) {
     if (stale()) return;
-    const cfg = {
-      verified: ['ok', 'check', fromScan ? t('You are already checked in') : t('You’re checked in')],
-      needs_review: ['warn', 'warn', fromScan ? t('Still waiting for your organizer’s review') : t('Sent to your organizer to review')],
-      rejected: ['bad', 'x', fromScan ? t('Your organizer did not accept this check-in') : t('You seem to be outside the place')],
-      revoked: ['bad', 'x', t('Your check-in was removed by the organizer')],
-    }[r.status] || ['warn', 'warn', t('Done')];
+    const title = {
+      verified: fromScan ? t('You are already checked in') : t('You’re checked in'),
+      needs_review: fromScan ? t('Still waiting for your organizer’s review') : t('Sent to your organizer to review'),
+      rejected: fromScan ? t('Your organizer did not accept this check-in') : t('You seem to be outside the place'),
+      revoked: t('Your check-in was removed by the organizer'),
+    }[r.status] || t('Done');
     const why = r.status === 'needs_review' ? reasonText(r.reasons) : '';
-    show(h('div', { class: 'result' },
-      h('div', { class: 'big-icon ' + cfg[0] }, icon(cfg[1])),
-      h('h1', {}, cfg[2]),
+    const done = h('div', { class: 'stack-sm', style: 'inline-size:100%;max-inline-size:380px' },
+      retakeable(r, fromScan) && h('button', { class: 'btn big', type: 'button', onClick: retake }, icon('camera'), t('Take the photo again')),
+      h('a', { class: `btn big ${retakeable(r, fromScan) ? 'secondary' : ''}`, href: '#/' }, t('Done')),
+      r.status === 'rejected' && !fromScan && h('a', { class: 'btn secondary big', href: '#/scan' }, t('Scan again')));
+
+    if (r.status === 'verified' || r.status === 'needs_review') {
+      const ok = r.status === 'verified';
+      return show(h('div', { class: 'result', role: 'status' },
+        h('h1', {}, title),
+        h('div', { class: 'pass' },
+          h('div', { class: 'pass-top' },
+            h('span', { class: 'eyebrow' }, scan.organization_name),
+            h('h2', {}, scan.session_title),
+            h('span', { class: 'small muted' }, state.me?.full_name || '')),
+          h('div', { class: 'pass-cut', 'aria-hidden': 'true' }),
+          h('div', { class: 'pass-bottom' },
+            h('div', { class: 'stack-xs' },
+              h('span', {}, ok ? t('Checked in') : t('Waiting for review')),
+              h('b', {}, fromScan ? t('Already on the list') : fmtWhen(new Date()))),
+            h('div', { class: 'stamp ' + (ok ? 'ok' : 'warn'), 'aria-hidden': 'true' }, icon(ok ? 'check' : 'warn'), ok ? t('Here') : t('Review')))),
+        why && h('div', { class: 'banner', style: 'max-inline-size:380px' }, why),
+        r.status === 'needs_review' && h('p', { class: 'muted small' }, t('You do not need to do anything else. They can approve you from their screen.')),
+        done));
+    }
+    show(h('div', { class: 'result', role: 'status' },
+      h('div', { class: 'big-icon bad' }, icon('x')),
+      h('h1', {}, title),
       h('p', { class: 'muted' }, [scan.session_title, ' · ', scan.organization_name]),
-      why && h('div', { class: 'banner' }, why),
-      r.status === 'needs_review' && h('p', { class: 'muted small' }, t('You do not need to do anything else. They can approve you from their screen.')),
-      retakeable(r, fromScan) && h('button', { class: 'btn secondary big', type: 'button', onClick: retake }, icon('camera'), t('Take the photo again')),
       r.status === 'rejected' && !fromScan && h('p', { class: 'muted small' }, t('If you are in the room, move closer to the organizer and scan again.')),
-      fromScan && (r.status === 'rejected' || r.status === 'revoked') && h('p', { class: 'muted small' }, t('If this is a mistake, talk to your organizer.')),
-      h('p', { class: 'small muted' }, fmtTime(new Date())),
-      h('div', { class: 'stack-sm', style: 'inline-size:100%;max-inline-size:360px' },
-        h('a', { class: 'btn big', href: '#/' }, t('Done')),
-        r.status === 'rejected' && !fromScan && h('a', { class: 'btn secondary big', href: '#/scan' }, t('Scan again')))));
+      fromScan && h('p', { class: 'muted small' }, t('If this is a mistake, talk to your organizer.')),
+      done));
   }
 
   // A photo that did not match the room or missed the code can be retaken at
@@ -152,7 +183,7 @@ export default async function checkin({ page, params: [token], navigate, onClean
 
   function problem(err) {
     if (stale()) return;
-    const again = ['qr_expired', 'ticket_expired', 'invalid_qr'].includes(err.code);
+    const again = ['qr_expired', 'ticket_expired', 'claim_expired', 'invalid_qr'].includes(err.code);
     const fresh = err.code === 'qr_expired' && arrivedFromSignIn('#/c/' + token);
     show(h('div', { class: 'result' },
       h('div', { class: 'big-icon warn' }, icon(err.code === 'session_ended' ? 'x' : 'warn')),

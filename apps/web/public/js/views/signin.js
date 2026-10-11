@@ -3,6 +3,7 @@ import { publicPost } from '../api.js';
 import { setSession, takeReturn, peekReturn, emailEnabled } from '../auth.js';
 import { authLayout, field, passwordField, formError, busy } from '../forms.js';
 import { t } from '../i18n.js';
+import { dropHeld } from '../held.js';
 
 export default async function signin({ page, setTitle }) {
   setTitle(t('Sign in'));
@@ -16,7 +17,7 @@ export default async function signin({ page, setTitle }) {
 
   mount(page, authLayout({
     title: t('Welcome back'),
-    subtitle: going?.startsWith('#/c/') ? t('Sign in to check in.') : t('Sign in to your account.'),
+    subtitle: going?.startsWith('#/c/') ? t('Sign in, then scan the code on the screen once more.') : t('Sign in to your account.'),
     body: h('form', {
       class: 'stack', novalidate: true,
       onSubmit: async (e) => {
@@ -27,6 +28,7 @@ export default async function signin({ page, setTitle }) {
           try {
             const res = await publicPost('/v1/auth/signin', { email: email.value.trim(), password: pw.input.value });
             setSession(res.token);
+            dropHeld();                                  // a held scan is only for new accounts
             location.hash = takeReturn() || '#/';
           } catch (e2) {
             err.show(e2.message);

@@ -1,50 +1,77 @@
-/* THEME: every color, font and shape of the app comes from these variables.
-   To re-skin, change the values below (and brand.js / assets/logo.svg). */
+/* THEME: every color, font and shape of the app comes from these tokens (the
+   same values are in design-tokens.json; the reasoning is in docs/DESIGN.md).
+   To re-skin, change the values below, brand.js and assets/logo.svg. */
+
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url(/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: swap;
+  src: url(/fonts/ibm-plex-sans-latin-500-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url(/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url(/fonts/ibm-plex-sans-latin-700-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
 :root {
-  /* brand */
-  --brand: #4338ca;          /* primary buttons, links, active tab */
-  --brand-strong: #3730a3;   /* hover / pressed */
-  --brand-ink: #ffffff;      /* text on --brand */
-  --brand-soft: #eef0ff;     /* tinted backgrounds */
-  --accent: #14b8a6;         /* highlights */
+  color-scheme: light dark;
 
-  /* surfaces and text */
-  --bg: #f6f7fb;
-  --surface: #ffffff;
-  --surface-2: #f0f2f8;
-  --line: #e3e6f0;
-  --text: #151a2d;
-  --muted: #5d6580;
+  /* brand: petrol teal (trust, calm) + amber (the "you are here" moment, used sparingly) */
+  --brand: #0E6B73;          /* primary buttons, links, active navigation */
+  --brand-strong: #0A545B;   /* hover / pressed */
+  --brand-ink: #FFFFFF;      /* text on --brand */
+  --brand-soft: #E1EFEF;     /* tinted backgrounds, selected states */
+  --accent: #F2A516;         /* the timer, the "here" mark, one highlight per screen */
+  --accent-ink: #10222A;     /* text on --accent */
 
-  /* status */
-  --ok: #0f9d6b;      --ok-soft: #e1f7ee;
-  --warn: #b7791f;    --warn-soft: #fdf3dc;
-  --bad: #d23b4f;     --bad-soft: #fde8eb;
+  /* surfaces and text: warm paper, deep ink */
+  --bg: #F5F3EE;
+  --surface: #FFFFFF;
+  --surface-2: #EDEAE2;
+  --line: #DFDACE;
+  --text: #10222A;
+  --muted: #4E5E63;
 
-  /* shape and type */
-  --radius: 16px;
-  --radius-sm: 10px;
-  --shadow: 0 1px 2px rgb(21 26 45 / .06), 0 8px 24px rgb(21 26 45 / .06);
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Naskh Arabic", "Helvetica Neue", Arial, sans-serif;
+  /* status: kept apart from the brand color, so "checked in" never reads as decoration */
+  --ok: #1C7A47;    --ok-soft: #E3F2E8;
+  --warn: #9A5B00;  --warn-soft: #FBF0D9;
+  --bad: #B5332A;   --bad-soft: #FBE7E4;
+  --on-status: #FFFFFF;      /* text on a filled --ok / --bad (buttons, toasts) */
+
+  /* shape: crisp, not bubbly */
+  --radius: 14px;            /* cards, dialogs */
+  --radius-sm: 10px;         /* buttons, inputs, list rows */
+  --radius-xs: 6px;          /* chips inside rows, thumbnails */
+  --shadow: 0 1px 2px rgb(16 34 42 / .06);                       /* resting: border does the work */
+  --shadow-raised: 0 12px 32px rgb(16 34 42 / .14), 0 2px 6px rgb(16 34 42 / .08);  /* menus, dialogs */
+
+  /* type: IBM Plex Sans (engineered, civic; has an Arabic family for the Iraq roadmap) */
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Naskh Arabic", Arial, sans-serif;
   --font-display: var(--font);
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --brand: #8b86ff;
-    --brand-strong: #a7a3ff;
-    --brand-ink: #11132a;
-    --brand-soft: #22254d;
-    --accent: #2dd4bf;
-    --bg: #0e1020;
-    --surface: #171a30;
-    --surface-2: #20243f;
-    --line: #2b3050;
-    --text: #eceefb;
-    --muted: #9aa1c4;
-    --ok: #3ddc9f;   --ok-soft: #12382b;
-    --warn: #f0b94f; --warn-soft: #3b2f12;
-    --bad: #ff7084;  --bad-soft: #3d1a22;
-    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px rgb(0 0 0 / .35);
+    --brand: #5CC6C9;
+    --brand-strong: #86D7D9;
+    --brand-ink: #062226;
+    --brand-soft: #123236;
+    --accent: #F5B83D;
+    --accent-ink: #10222A;
+    --bg: #0C1517;
+    --surface: #132124;
+    --surface-2: #1A2C30;
+    --line: #26393F;
+    --text: #E7EEEE;
+    --muted: #9FB2B4;
+    --ok: #4CC982;   --ok-soft: #123425;
+    --warn: #F0B657; --warn-soft: #3A2C10;
+    --bad: #FF8A7D;  --bad-soft: #3D1C1A;
+    --on-status: #0C1517;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4);
+    --shadow-raised: 0 12px 32px rgb(0 0 0 / .5), 0 2px 6px rgb(0 0 0 / .35);
   }
 }

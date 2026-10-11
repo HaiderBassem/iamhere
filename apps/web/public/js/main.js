@@ -4,6 +4,7 @@ import { get, post } from './api.js';
 import { brand } from '../brand.js';
 import { h, mount, loading, icon, initials, toast } from './ui.js';
 import { t, initI18n } from './i18n.js';
+import { holdScan } from './held.js';
 
 const root = document.getElementById('app');
 export const state = { me: null, orgs: null, account: null };
@@ -16,7 +17,7 @@ const ROUTES = [
   [/^#\/forgot$/, 'forgot', true],
   [/^#\/reset\/([\w-]+)$/, 'reset', true],
   [/^#\/verify\/([\w-]+)$/, 'verify', true],
-  [/^#\/start$/, 'start'],
+  [/^#\/privacy$/, 'privacy', true],
   [/^#\/scan$/, 'scan'],
   [/^#\/c\/([\w-]+)$/, 'checkin'],
   [/^#\/join\/([\w-]+)$/, 'join'],
@@ -24,7 +25,7 @@ const ROUTES = [
   [/^#\/new-org$/, 'neworg'],
   [/^#\/o\/([\w-]+)$/, 'org'],
   [/^#\/o\/([\w-]+)\/s\/([\w-]+)$/, 'session'],
-  [/^#\/o\/([\w-]+)\/(team|places|settings)$/, 'orgtab'],
+  [/^#\/o\/([\w-]+)\/(team|places|settings|report)$/, 'orgtab'],
 ];
 
 let cleanup = [];
@@ -59,6 +60,8 @@ async function route() {
   if (view === 'home' && !signedIn) { view = 'landing'; pub = true; }
   if (!pub && !signedIn) {
     rememberReturn(hash);                       // come back here after signing in (a check-in link, an invite)
+    // a check-in link: hold the scan while the account is created, so there is no second scan
+    if (view === 'checkin') { mount(root, h('main', { class: 'public' }, loading())); await holdScan(match[1]); if (my !== token) return; }
     return navigate(/^#\/(c|join)\//.test(hash) ? '#/signup' : '#/signin', { replace: true });
   }
   if (signedIn && ['signin', 'signup', 'forgot'].includes(view)) return navigate('#/', { replace: true });
@@ -118,7 +121,7 @@ function topbar(hash) {
     h('a', { class: 'skip', href: '#main', onClick: (e) => { e.preventDefault(); document.getElementById('main')?.focus(); } }, t('Skip to content')),
     h('a', { class: 'brand', href: '#/' }, h('img', { src: brand.logo, alt: '' }), h('span', {}, brand.name)),
     h('nav', { class: 'topnav', 'aria-label': t('Main') },
-      link('#/', t('Home'), hash === '#/' || hash === '#' || /^#\/(o|new-org|start)/.test(hash)),
+      link('#/', t('Home'), hash === '#/' || hash === '#' || /^#\/(o|new-org)/.test(hash)),
       link('#/scan', t('Check in'), hash === '#/scan' || hash.startsWith('#/c/'))),
     h('span', { class: 'grow' }),
     h('div', { class: 'menu-wrap' }, menuBtn, menu));
@@ -127,7 +130,7 @@ function topbar(hash) {
 function tabbar(hash) {
   const tab = (href, label, ic, on) => h('a', { href, 'aria-current': on ? 'page' : false }, icon(ic), label);
   return h('nav', { class: 'tabbar', 'aria-label': t('Main') },
-    tab('#/', t('Home'), 'home', hash === '#/' || hash === '#' || /^#\/(o|new-org|start)/.test(hash)),
+    tab('#/', t('Home'), 'home', hash === '#/' || hash === '#' || /^#\/(o|new-org)/.test(hash)),
     tab('#/scan', t('Check in'), 'scan', hash === '#/scan' || hash.startsWith('#/c/')),
     tab('#/me', t('You'), 'user', hash === '#/me'));
 }

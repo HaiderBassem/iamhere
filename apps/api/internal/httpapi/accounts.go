@@ -33,12 +33,27 @@ func (s *Server) signUp(w http.ResponseWriter, r *http.Request) {
 			Name     string `json:"name"`
 			Email    string `json:"email"`
 			Password string `json:"password"`
+			Claim    string `json:"claim"` // a check-in held while signing up (optional)
 		}
 		if err := decode(w, r, &in); err != nil {
 			return 0, nil, err
 		}
-		res, err := s.svc.SignUp(r.Context(), in.Name, in.Email, in.Password, r.UserAgent())
+		res, err := s.svc.SignUp(r.Context(), in.Name, in.Email, in.Password, r.UserAgent(), in.Claim)
 		return http.StatusCreated, res, err
+	})
+}
+
+// claim holds a fresh scan for someone who is not signed in yet (see app.Claim).
+func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
+	s.public(w, r, s.claims, func() (int, any, error) {
+		var in struct {
+			Token string `json:"token"`
+		}
+		if err := decode(w, r, &in); err != nil {
+			return 0, nil, err
+		}
+		res, err := s.svc.Claim(r.Context(), in.Token)
+		return http.StatusOK, res, err
 	})
 }
 

@@ -119,3 +119,31 @@ func TestTicketLifecycle(t *testing.T) {
 		t.Fatal("ticket accepted as QR token")
 	}
 }
+
+func TestClaimLifecycle(t *testing.T) {
+	secret, sid, t0 := []byte("0123456789abcdef0123456789abcdef"), uuid.New(), time.Unix(1_700_000_000, 0)
+	c := SignClaim(secret, sid, t0)
+	if got, err := ClaimSessionID(c); err != nil || got != sid {
+		t.Fatalf("session id: %v %v", got, err)
+	}
+	if err := VerifyClaim(secret, sid, c, t0.Add(ClaimTTL-time.Second)); err != nil {
+		t.Fatalf("valid claim: %v", err)
+	}
+	if err := VerifyClaim(secret, sid, c, t0.Add(ClaimTTL+2*time.Second)); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expired claim: %v", err)
+	}
+	if err := VerifyClaim(secret, uuid.New(), c, t0); !errors.Is(err, ErrBadMAC) {
+		t.Fatalf("other session: %v", err)
+	}
+	if err := VerifyClaim([]byte("another secret, another session!"), sid, c, t0); !errors.Is(err, ErrBadMAC) {
+		t.Fatalf("other secret: %v", err)
+	}
+	// a QR code is not a claim, and a claim is not a QR code (domain separation)
+	code := Sign(secret, sid, t0, 5*time.Second)
+	if err := VerifyClaim(secret, sid, code, t0); !errors.Is(err, ErrBadMAC) {
+		t.Fatalf("code accepted as claim: %v", err)
+	}
+	if err := Verify(secret, sid, c, t0, 5*time.Second, 2); err == nil {
+		t.Fatal("claim accepted as code")
+	}
+}

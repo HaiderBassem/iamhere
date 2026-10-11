@@ -4,6 +4,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -359,8 +361,17 @@ func (s *Service) CreateOrg(ctx context.Context, u User, name, slug, country, tz
 	if owned >= maxOwnedOrgs {
 		return Org{}, newErr(429, "org_limit", "You have reached the organization limit.")
 	}
+	o, err := insertOrg(ctx, tx, u, name, slug, cc, tz)
+	if err != nil {
+		return Org{}, err
+	}
+	return o, tx.Commit(ctx)
+}
+
+// insertOrg creates an organization owned by u, with default settings.
+func insertOrg(ctx context.Context, tx pgx.Tx, u User, name, slug string, cc *string, tz string) (Org, error) {
 	o := Org{Slug: slug, Name: name, Country: cc, Timezone: tz, Role: RoleOwner}
-	err = tx.QueryRow(ctx, `INSERT INTO organizations(slug,name,country,timezone) VALUES($1,$2,$3,$4) RETURNING id`,
+	err := tx.QueryRow(ctx, `INSERT INTO organizations(slug,name,country,timezone) VALUES($1,$2,$3,$4) RETURNING id`,
 		slug, name, cc, tz).Scan(&o.ID)
 	if isUnique(err) {
 		return Org{}, newErr(409, "slug_taken", "That identifier is already taken.")
@@ -375,6 +386,57 @@ func (s *Service) CreateOrg(ctx context.Context, u User, name, slug, country, tz
 		return Org{}, err
 	}
 	if err := audit(ctx, tx, &o.ID, u.ID, "org.create", o.ID.String(), nil); err != nil {
+		return Org{}, err
+	}
+	return o, nil
+}
+
+// Workspace returns where the person's sessions go when they just press Start:
+// the first organization in which they may start sessions (one they own
+// first), or, for someone who has none, a personal workspace created now and
+// named after them. Nobody has to understand "organizations" to take
+// attendance; they can rename it or create more later.
+func (s *Service) Workspace(ctx context.Context, u User, tz string) (Org, error) {
+	if tz == "" {
+		tz = "UTC"
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		tz = "UTC" // a browser-reported zone this server does not know: not worth failing Start
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Org{}, err
+	}
+	defer tx.Rollback(ctx)
+	// one at a time per person, so a double tap cannot create two workspaces
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('workspace:'||$1::text, 0))`, u.ID); err != nil {
+		return Org{}, err
+	}
+	var o Org
+	err = tx.QueryRow(ctx, `SELECT o.id, o.slug, o.name, o.country, o.timezone, m.role::text
+		FROM organizations o JOIN organization_memberships m ON m.org_id=o.id
+		WHERE m.user_id=$1 AND m.role IN ('owner','admin','organizer')
+		ORDER BY (m.role='owner') DESC, m.created_at, o.id LIMIT 1`, u.ID).
+		Scan(&o.ID, &o.Slug, &o.Name, &o.Country, &o.Timezone, &o.Role)
+	if err == nil {
+		return o, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Org{}, err
+	}
+	var owned int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM organization_memberships WHERE user_id=$1 AND role='owner'`, u.ID).Scan(&owned); err != nil {
+		return Org{}, err
+	}
+	if owned >= maxOwnedOrgs {
+		return Org{}, newErr(429, "org_limit", "You have reached the organization limit.")
+	}
+	b := make([]byte, 5)
+	if _, err := rand.Read(b); err != nil {
+		return Org{}, err
+	}
+	o, err = insertOrg(ctx, tx, u, u.FullName, "p-"+hex.EncodeToString(b), nil, tz)
+	if err != nil {
 		return Org{}, err
 	}
 	return o, tx.Commit(ctx)

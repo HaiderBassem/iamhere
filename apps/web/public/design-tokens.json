@@ -1,0 +1,145 @@
+{
+  "$description": "I Am Here design tokens. Generated from theme.css (the source of truth); rationale in docs/DESIGN.md.",
+  "color": {
+    "brand": {
+      "light": "#0E6B73",
+      "dark": "#5CC6C9"
+    },
+    "brand-strong": {
+      "light": "#0A545B",
+      "dark": "#86D7D9"
+    },
+    "brand-ink": {
+      "light": "#FFFFFF",
+      "dark": "#062226"
+    },
+    "brand-soft": {
+      "light": "#E1EFEF",
+      "dark": "#123236"
+    },
+    "accent": {
+      "light": "#F2A516",
+      "dark": "#F5B83D"
+    },
+    "accent-ink": {
+      "light": "#10222A",
+      "dark": "#10222A"
+    },
+    "bg": {
+      "light": "#F5F3EE",
+      "dark": "#0C1517"
+    },
+    "surface": {
+      "light": "#FFFFFF",
+      "dark": "#132124"
+    },
+    "surface-2": {
+      "light": "#EDEAE2",
+      "dark": "#1A2C30"
+    },
+    "line": {
+      "light": "#DFDACE",
+      "dark": "#26393F"
+    },
+    "text": {
+      "light": "#10222A",
+      "dark": "#E7EEEE"
+    },
+    "muted": {
+      "light": "#4E5E63",
+      "dark": "#9FB2B4"
+    },
+    "ok": {
+      "light": "#1C7A47",
+      "dark": "#4CC982"
+    },
+    "ok-soft": {
+      "light": "#E3F2E8",
+      "dark": "#123425"
+    },
+    "warn": {
+      "light": "#9A5B00",
+      "dark": "#F0B657"
+    },
+    "warn-soft": {
+      "light": "#FBF0D9",
+      "dark": "#3A2C10"
+    },
+    "bad": {
+      "light": "#B5332A",
+      "dark": "#FF8A7D"
+    },
+    "bad-soft": {
+      "light": "#FBE7E4",
+      "dark": "#3D1C1A"
+    },
+    "on-status": {
+      "light": "#FFFFFF",
+      "dark": "#0C1517"
+    }
+  },
+  "radius": {
+    "md": "14px",
+    "sm": "10px",
+    "xs": "6px"
+  },
+  "shadow": {
+    "resting": {
+      "light": "0 1px 2px rgb(16 34 42 / .06)",
+      "dark": "0 1px 2px rgb(0 0 0 / .4)"
+    },
+    "raised": {
+      "light": "0 12px 32px rgb(16 34 42 / .14), 0 2px 6px rgb(16 34 42 / .08)",
+      "dark": "0 12px 32px rgb(0 0 0 / .5), 0 2px 6px rgb(0 0 0 / .35)"
+    }
+  },
+  "font": {
+    "family": "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", Roboto, \"Noto Sans\", \"Noto Naskh Arabic\", Arial, sans-serif",
+    "mono": "ui-monospace, \"SF Mono\", \"Cascadia Mono\", Menlo, monospace",
+    "weights": [
+      400,
+      500,
+      600,
+      700
+    ],
+    "size": {
+      "body": "16px",
+      "small": ".875rem",
+      "eyebrow": ".75rem",
+      "h3": "1rem",
+      "h2": "1.2rem",
+      "h1": "clamp(1.55rem, 1.25rem + 1vw, 2rem)",
+      "display": "clamp(2.4rem, 1.3rem + 4.2vw, 4.1rem)"
+    },
+    "lineHeight": {
+      "body": 1.55,
+      "heading": 1.2,
+      "display": 1.02
+    }
+  },
+  "space": {
+    "1": "4px",
+    "2": "8px",
+    "3": "12px",
+    "4": "16px",
+    "5": "20px",
+    "6": "28px"
+  },
+  "size": {
+    "touchTarget": "44px",
+    "input": "48px",
+    "primaryAction": "54px",
+    "contentMax": "760px",
+    "landingMax": "1120px"
+  },
+  "breakpoint": {
+    "tabbarToTopnav": "720px",
+    "landingTwoColumn": "900px"
+  },
+  "motion": {
+    "fast": ".15s",
+    "enter": ".2s ease-out",
+    "stamp": ".35s cubic-bezier(.2, 1.6, .4, 1)",
+    "reducedMotion": "all animation off"
+  }
+}

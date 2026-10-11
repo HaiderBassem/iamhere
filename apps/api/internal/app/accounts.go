@@ -37,6 +37,17 @@ const (
 type SignedIn struct {
 	Token string `json:"token"`
 	User  User   `json:"user"`
+	// CheckIn continues a check-in held by a claim (sign-up only).
+	CheckIn *ScanResult `json:"checkin,omitempty"`
+	// CheckInError says why a held check-in could not continue (the account
+	// was still created).
+	CheckInError *ClaimError `json:"checkin_error,omitempty"`
+}
+
+// ClaimError is a held check-in that could not continue after sign-up.
+type ClaimError struct {
+	Code    string `json:"error"`
+	Message string `json:"message"`
 }
 
 // Account is the signed-in person's sign-in details.
@@ -134,8 +145,9 @@ func (s *Service) newSession(ctx context.Context, q dbq, userID uuid.UUID, userA
 }
 
 // SignUp creates an account and signs it in. Only a name, an email address
-// and a password are needed.
-func (s *Service) SignUp(ctx context.Context, name, email, password, userAgent string) (SignedIn, error) {
+// and a password are needed. A claim (from Claim) continues the check-in that
+// brought the person here, so they do not have to scan again.
+func (s *Service) SignUp(ctx context.Context, name, email, password, userAgent, claim string) (SignedIn, error) {
 	n, err := validText(name, 1, 200, "name")
 	if err != nil {
 		return SignedIn{}, newErr(400, "invalid_name", "Enter your name.")
@@ -183,7 +195,22 @@ func (s *Service) SignUp(ctx context.Context, name, email, password, userAgent s
 	if s.mailOn() {
 		_ = s.sendLink(ctx, id, e, n, "verify_email")
 	}
-	return SignedIn{Token: tok, User: u}, nil
+	out := SignedIn{Token: tok, User: u}
+	if claim != "" {
+		// only here, right after the account was created: a claim never
+		// checks in an account that already existed
+		res, err := s.redeemClaim(ctx, u, claim)
+		var ae *Error
+		switch {
+		case err == nil:
+			out.CheckIn = &res
+		case errors.As(err, &ae):
+			out.CheckInError = &ClaimError{ae.Code, ae.Message}
+		default:
+			return SignedIn{}, err
+		}
+	}
+	return out, nil
 }
 
 // SignIn checks an email and password. Wrong email and wrong password get the

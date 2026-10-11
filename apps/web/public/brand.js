@@ -3,5 +3,6 @@
 export const brand = {
   name: 'I Am Here',
   tagline: 'Attendance in one scan.',
+  promise: 'One title. One QR code. Everyone checked in.',
   logo: '/assets/logo.svg',
 };
