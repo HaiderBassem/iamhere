@@ -9,9 +9,10 @@
 // needs the vision service running (IAH_VISION_URL on the API).
 //
 //   VISION_PYTHON  python with apps/vision/requirements-dev.txt (default python3)
+//   MAIL_DIR       where the API writes its emails (IAH_MAIL_DIR), to follow emailed links
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,9 +51,38 @@ async function browserFor(room) {
 }
 
 const RUN = Date.now().toString(36);
+const PASSWORD = 'blue-river-seven';
+let people = 0;
+const emailFor = (name) => `${RUN}.${++people}.${name.normalize('NFKD').replace(/[^a-z]/gi, '').toLowerCase() || 'p'}@example.org`;
 
-/** A signed-in person on a phone-sized screen. */
-async function person(name, { room = 'a', geo = VENUE, desktop = false } = {}) {
+/** The newest email sent to `to`, with its link of the given kind (#/verify/… or #/reset/…). */
+async function emailLink(to, kind) {
+  const dir = process.env.MAIL_DIR;
+  if (!dir) throw new Error('MAIL_DIR is not set');
+  for (let i = 0; i < 100; i++) {
+    const files = (() => { try { return readdirSync(dir).filter((f) => f.endsWith('.eml')).sort().reverse(); } catch { return []; } })();
+    for (const f of files) {
+      const m = readFileSync(join(dir, f), 'utf8').replace(/=\r\n/g, '');
+      if (!m.includes('To: ' + to)) continue;
+      const link = m.match(new RegExp('https?://[^\\s"<]+#/' + kind + '/(iah_l_[A-Za-z0-9_-]+)'));
+      if (link) return '/#/' + kind + '/' + link[1];
+    }
+    await sleep(100);
+  }
+  throw new Error(`no ${kind} email for ${to}`);
+}
+
+/** Creates an account through the sign-up page; leaves the person on the welcome screen. */
+async function signUp(page, name, email) {
+  await page.goto(BASE + '/#/signup');
+  await page.getByLabel('Full name').fill(name);
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+  await page.getByRole('button', { name: 'Create account' }).click();
+}
+
+/** A person with their own account, signed in on a phone-sized screen. */
+async function person(name, { room = 'a', geo = VENUE, desktop = false, organizer = false } = {}) {
   const b = await browserFor(room);
   const ctx = await b.newContext({
     viewport: desktop ? { width: 1180, height: 820 } : { width: 390, height: 844 },
@@ -69,11 +99,14 @@ async function person(name, { room = 'a', geo = VENUE, desktop = false } = {}) {
   page.errors = [];
   page.on('pageerror', (e) => page.errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) page.errors.push(m.text()); });
-  await page.goto(BASE + '/');
-  await page.getByLabel('What’s your name?').fill(name);
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('heading', { name: new RegExp('Hi ' + name.split(' ')[0]) }).waitFor();
-  return { name, ctx, page };
+  const email = emailFor(name);
+  await signUp(page, name, email);
+  await page.getByRole('heading', { name: new RegExp('^Welcome, ' + name.split(' ')[0]) }).waitFor();
+  if (!organizer) {
+    await page.getByRole('button', { name: /I’m checking in/ }).click();
+    await page.getByRole('heading', { name: new RegExp('Hi ' + name.split(' ')[0]) }).waitFor();
+  }
+  return { name, email, ctx, page };
 }
 
 const liveTracks = (p) => p.page.evaluate(() => window.__streams.flatMap((st) => st.getTracks()).filter((t) => t.readyState === 'live').length);
@@ -101,12 +134,14 @@ const heading = (p) => p.page.locator('main h1').first();
 try {
   // ---------------------------------------------------------------------------
   section('Organizer sets up in seconds');
-  const prof = await person('Prof Ada Lovelace', { desktop: true });
-  await prof.page.getByRole('link', { name: 'Set up your organization' }).click();
-  await prof.page.getByLabel('Organization name').fill('Engineering School ' + RUN);
-  await prof.page.getByRole('button', { name: 'Create' }).click();
+  const prof = await person('Prof Ada Lovelace', { desktop: true, organizer: true });
+  await shot(prof, '09-welcome');
+  await prof.page.getByRole('button', { name: /I run sessions/ }).click();
+  await prof.page.getByRole('button', { name: 'School' }).click();
+  await prof.page.getByLabel('Name').fill('Engineering School ' + RUN);
+  await prof.page.getByRole('button', { name: /Create and continue/ }).click();
   await prof.page.getByRole('heading', { name: 'Start attendance' }).waitFor();
-  check(true, 'organization created with just a name; lands on the Start screen');
+  check(true, 'sign up, then "I run sessions" + a name: the organization exists and the Start screen is open');
   await shot(prof, '10-org-start');
   const orgUrl = prof.page.url();
 
@@ -164,7 +199,11 @@ try {
   browsers.qr = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${join(work, 'qr.y4m')}`] });
   const qctx = await browsers.qr.newContext({ viewport: { width: 390, height: 844 }, permissions: ['camera'] });
   const qpage = await qctx.newPage();
-  await qpage.addInitScript(() => localStorage.setItem('iah.dev', JSON.stringify({ sub: 'scanner-1', name: 'Scan Tester' })));
+  const scanner = await (await fetch(BASE + '/v1/auth/signup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Scan Tester', email: emailFor('scanner'), password: PASSWORD }),
+  })).json();
+  await qpage.addInitScript((tok) => localStorage.setItem('iah.session', tok), scanner.token);
   await qpage.goto(BASE + '/#/scan');
   const token = live.split('/#/c/')[1];
   await qpage.waitForURL((u) => u.hash === '#/c/' + token, { timeout: 15000 });
@@ -370,15 +409,99 @@ try {
         'a reviewer sees the live list but not the QR');
 
   // ---------------------------------------------------------------------------
+  section('Accounts: one identity, everywhere');
+  const vctx = await (await browserFor('a')).newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US' });
+  const v = { name: 'Vera Visitor', email: emailFor('vera'), ctx: vctx, page: await vctx.newPage() };
+  v.page.errors = [];
+  v.page.on('pageerror', (e) => v.page.errors.push(e.message));
+  await v.page.goto(BASE + '/');
+  await v.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
+  check(await v.page.getByRole('link', { name: 'Get started' }).first().isVisible(), 'a visitor sees the start page, with sign up and sign in');
+  await shot(v, '60-landing');
+
+  // a check-in link opened without an account: sign up first, then scan once more
+  await prof.page.goto(strictSession);
+  await v.page.goto(await readQR(prof.page));
+  await v.page.getByRole('heading', { name: 'Create your account' }).waitFor();
+  check(await v.page.getByText(/One account checks you in everywhere/).isVisible(), 'a check-in link without an account asks to create one, and says why');
+  await v.page.getByLabel('Full name').fill(v.name);
+  await v.page.getByLabel('Email').fill(carla.email);
+  await v.page.getByLabel('Password', { exact: true }).fill('password123');
+  await v.page.getByRole('button', { name: 'Create account' }).click();
+  await v.page.getByRole('alert').filter({ hasText: /too common/ }).waitFor();
+  check(true, 'a well-known password is refused with a clear reason');
+  await v.page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+  await v.page.getByRole('button', { name: 'Create account' }).click();
+  await v.page.getByRole('alert').filter({ hasText: /already an account/ }).waitFor();
+  check(true, 'an email that already has an account is pointed to sign in instead');
+  await shot(v, '61-signup-errors');
+  await sleep(11000);                                                       // the code on the screen moves on meanwhile
+  await v.page.getByLabel('Email').fill(v.email);
+  await v.page.getByRole('button', { name: 'Create account' }).click();
+  await v.page.getByRole('heading', { name: /You’re signed in. Now scan once more/ }).waitFor();
+  check(true, 'after signing up from a check-in link, it explains the code moved on and offers the scanner');
+
+  // confirm the email from the link that was emailed
+  await v.page.goto(BASE + (await emailLink(v.email, 'verify')));
+  await v.page.getByRole('heading', { name: 'Email confirmed' }).waitFor();
+  check(true, 'the emailed confirmation link confirms the address');
+
+  // sign out, wrong password, right password
+  await v.page.goto(BASE + '/#/me');
+  await v.page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await v.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
+  await v.page.goto(BASE + '/#/signin');
+  await v.page.getByRole('heading', { name: 'Welcome back' }).waitFor();
+  await v.page.getByLabel('Email').fill(v.email);
+  await v.page.getByLabel('Password', { exact: true }).fill('not-my-password');
+  await v.page.getByRole('button', { name: 'Sign in' }).click();
+  await v.page.getByRole('alert').filter({ hasText: /don’t match/ }).waitFor();
+  check(true, 'a wrong password says so, without telling whether the email exists');
+  await v.page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+  await v.page.getByRole('button', { name: 'Sign in' }).click();
+  await v.page.getByRole('heading', { name: /Hi Vera/ }).waitFor();
+  check(true, 'signing in with the right password lands on home');
+
+  // forgot password -> emailed link -> new password -> signed in; the old one stops working
+  await v.page.goto(BASE + '/#/me');
+  await v.page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await v.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
+  await v.page.goto(BASE + '/#/signin');
+  await v.page.getByRole('link', { name: 'Forgot password?' }).click();
+  await v.page.getByRole('heading', { name: 'Reset your password' }).waitFor();
+  await v.page.getByLabel('Email').fill(v.email);
+  await v.page.getByRole('button', { name: 'Send reset link' }).click();
+  await v.page.getByRole('heading', { name: 'Check your inbox' }).waitFor();
+  await v.page.goto(BASE + (await emailLink(v.email, 'reset')));
+  await v.page.getByLabel('New password').fill('green-hill-eight');
+  await shot(v, '62-reset');
+  await v.page.getByRole('button', { name: 'Save and sign in' }).click();
+  await v.page.getByRole('heading', { name: /Hi Vera/ }).waitFor();
+  check(true, 'forgot password: the emailed link sets a new password and signs in');
+
+  // the organizer signs out from the account menu and back in, and lands where they were going
+  await prof.page.getByRole('button', { name: 'Your account' }).click();
+  await shot(prof, '63-account-menu');
+  await prof.page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await prof.page.getByRole('heading', { name: 'Attendance in one scan.' }).waitFor();
+  await prof.page.goto(strictSession);
+  await prof.page.getByRole('heading', { name: 'Welcome back' }).waitFor();
+  await prof.page.getByLabel('Email').fill(prof.email);
+  await prof.page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+  await prof.page.getByRole('button', { name: 'Sign in' }).click();
+  await prof.page.locator('.qr-box:not(.stale) svg').waitFor();
+  check(prof.page.url() === strictSession, 'signing in returns to the page that was asked for (the live session, its code showing)');
+
+  // ---------------------------------------------------------------------------
   section('Home & errors');
   await shot(carla, '50-home-student');
   await carla.page.goto(BASE + '/#/');
-  await carla.page.getByText('Your recent check-ins').waitFor();
-  check(await carla.page.getByText('Strict exam').count() > 0, 'student home lists their recent check-ins');
+  await carla.page.getByRole('heading', { name: 'Your attendance' }).waitFor();
+  check(await carla.page.getByText('Strict exam').count() > 0, 'student home lists their check-ins, from every organization');
   await prof.page.goto(BASE + '/#/');
   await shot(prof, '51-home-organizer');
 
-  const allErrors = [prof, ben, carla, dan, eve, fay, hal, gus, rev].flatMap((p) => p.page.errors);
+  const allErrors = [prof, ben, carla, dan, eve, fay, hal, gus, rev, v].flatMap((p) => p.page.errors);
   check(allErrors.length === 0, 'no JavaScript errors in any browser' + (allErrors.length ? ': ' + allErrors.join(' | ') : ''));
 } catch (err) {
   failed++;

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,22 +26,26 @@ import (
 )
 
 type Server struct {
-	svc   *app.Service
-	ver   auth.Verifier
-	log   *slog.Logger
-	ready func(context.Context) error
+	svc        *app.Service
+	log        *slog.Logger
+	ready      func(context.Context) error
+	devAuth    bool
+	trustProxy bool
 
-	checkins *limiterSet // per user
-	creates  *limiterSet // per user: sessions, orgs, invites, venues
-	accepts  *limiterSet // per user: invite redemption
+	checkins *limiterSet[uuid.UUID] // per user
+	creates  *limiterSet[uuid.UUID] // per user: sessions, orgs, invites, venues
+	accepts  *limiterSet[uuid.UUID] // per user: invite redemption
+	signins  *limiterSet[string]    // per IP: sign in
+	signups  *limiterSet[string]    // per IP: new accounts
+	mails    *limiterSet[string]    // per IP: anything that sends an email
+	links    *limiterSet[string]    // per IP: following an emailed link (tokens are unguessable)
 	sseEvery time.Duration
 }
 
 // PublicConfig is what the web app needs before the user is signed in.
 type PublicConfig struct {
-	Auth     string `json:"auth"` // "oidc" | "dev"
-	Issuer   string `json:"issuer,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
+	Auth  string `json:"auth"`  // "local": built-in accounts
+	Email bool   `json:"email"` // emailed links (reset password, confirm address) work
 }
 
 // Options are the optional parts of the HTTP layer.
@@ -48,19 +53,30 @@ type Options struct {
 	// CORSOrigins lists exact browser origins that may call the API cross-origin
 	// (empty = same-origin only).
 	CORSOrigins []string
-	Public      PublicConfig
 	// WebDir, when set, serves the web app from this directory (development and
 	// single-binary setups). In production Caddy serves it instead.
 	WebDir string
+	// DevAuth also accepts "dev:<sub>:<name>" bearer tokens (tests and local
+	// scripts; never in production).
+	DevAuth bool
+	// TrustProxy takes the client address from the last X-Forwarded-For entry
+	// (set when the API is only reachable through the reverse proxy).
+	TrustProxy bool
 }
 
 // New builds the HTTP handler.
-func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(context.Context) error, opt Options) http.Handler {
+func New(svc *app.Service, log *slog.Logger, ready func(context.Context) error, opt Options) http.Handler {
 	s := &Server{
-		svc: svc, ver: ver, log: log, ready: ready,
-		checkins: newLimiterSet(rate.Every(3*time.Second), 10), // ~20/min sustained, burst 10
-		creates:  newLimiterSet(rate.Every(6*time.Second), 10),
-		accepts:  newLimiterSet(rate.Every(6*time.Second), 10),
+		svc: svc, log: log, ready: ready, devAuth: opt.DevAuth, trustProxy: opt.TrustProxy,
+		checkins: newLimiterSet[uuid.UUID](rate.Every(3*time.Second), 10), // ~20/min sustained, burst 10
+		creates:  newLimiterSet[uuid.UUID](rate.Every(6*time.Second), 10),
+		accepts:  newLimiterSet[uuid.UUID](rate.Every(6*time.Second), 10),
+		// a whole class may share one IP (school NAT) and sign up at once; guessing
+		// is limited per account (app.maxFailedSignIns), not just per IP
+		signins:  newLimiterSet[string](rate.Every(2*time.Second), 60),
+		signups:  newLimiterSet[string](rate.Every(2*time.Second), 60),
+		mails:    newLimiterSet[string](rate.Every(30*time.Second), 10),
+		links:    newLimiterSet[string](rate.Every(2*time.Second), 30),
 		sseEvery: 2 * time.Second,
 	}
 	r := chi.NewRouter()
@@ -76,7 +92,19 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 	})
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Get("/public-config", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, opt.Public) })
+		r.Get("/public-config", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, 200, PublicConfig{Auth: "local", Email: s.svc.MailEnabled()})
+		})
+
+		// accounts: no session needed
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(20 * time.Second))
+			r.Post("/auth/signup", s.signUp)
+			r.Post("/auth/signin", s.signIn)
+			r.Post("/auth/password/forgot", s.forgotPassword)
+			r.Post("/auth/password/reset", s.resetPassword)
+			r.Post("/auth/email/confirm", s.confirmEmail)
+		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.authenticate)
@@ -87,6 +115,11 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.Timeout(20 * time.Second))
 
+				r.Get("/auth/account", s.h(s.account))
+				r.Post("/auth/signout", s.h(s.signOut))
+				r.Post("/auth/signout-others", s.h(s.signOutOthers))
+				r.Post("/auth/password", s.h(s.changePassword))
+				r.Post("/auth/email/resend", s.h(s.resendConfirmation))
 				r.Get("/me", s.h(s.getMe))
 				r.Patch("/me", s.h(s.patchMe))
 				r.Delete("/me", s.h(s.deleteMe))
@@ -113,6 +146,8 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 					r.Post("/venues/{vid}/references", s.h(s.addReference))
 					r.Delete("/venues/{vid}/references/{rid}", s.h(s.deleteReference))
 					r.Post("/venues/{vid}/test", s.h(s.testPlace))
+					r.Get("/venues/{vid}/photo-stats", s.h(s.photoStats))
+					r.Delete("/venues/{vid}/learned", s.h(s.forgetLearned))
 					r.Get("/references/{rid}/image", s.h(s.referenceImage))
 
 					r.Get("/sessions", s.h(s.listSessions))
@@ -133,7 +168,7 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 	})
 
 	if opt.WebDir != "" {
-		r.NotFound(webApp(opt.WebDir, cspFor(opt.Public.Issuer)))
+		r.NotFound(webApp(opt.WebDir, csp))
 	}
 	return r
 }
@@ -141,8 +176,15 @@ func New(svc *app.Service, ver auth.Verifier, log *slog.Logger, ready func(conte
 // ---- middleware -----------------------------------------------------------
 
 type ctxKey struct{}
+type sessionKey struct{}
 
 func userFrom(ctx context.Context) app.User { return ctx.Value(ctxKey{}).(app.User) }
+
+// sessionFrom is the signed-in device's session (uuid.Nil for dev tokens).
+func sessionFrom(ctx context.Context) uuid.UUID {
+	id, _ := ctx.Value(sessionKey{}).(uuid.UUID)
+	return id
+}
 
 // authenticate uses bearer tokens in the Authorization header (never cookies),
 // so the API is not exposed to CSRF.
@@ -153,18 +195,45 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			s.writeErr(w, r, app.UnauthorizedErr())
 			return
 		}
-		id, err := s.ver.Verify(r.Context(), tok)
-		if err != nil {
-			s.writeErr(w, r, app.UnauthorizedErr())
-			return
+		var u app.User
+		var sid uuid.UUID
+		var err error
+		if s.devAuth && strings.HasPrefix(tok, "dev:") {
+			var id auth.Identity
+			if id, err = (auth.Dev{}).Verify(r.Context(), tok); err != nil {
+				err = app.UnauthorizedErr()
+			} else {
+				u, err = s.svc.EnsureUser(r.Context(), id)
+			}
+		} else {
+			u, sid, err = s.svc.SessionUser(r.Context(), tok)
 		}
-		u, err := s.svc.EnsureUser(r.Context(), id)
 		if err != nil {
 			s.writeErr(w, r, err)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
+		ctx := context.WithValue(context.WithValue(r.Context(), ctxKey{}, u), sessionKey{}, sid)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// clientIP is the address rate limits are keyed on. Behind the reverse proxy
+// (TrustProxy) that is the last X-Forwarded-For hop, which the proxy wrote;
+// earlier entries come from the client and are ignored.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+				return ip
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func secureHeaders(next http.Handler) http.Handler {
@@ -261,9 +330,9 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 	})
 }
 
-type limiterSet struct {
+type limiterSet[K comparable] struct {
 	mu    sync.Mutex
-	m     map[uuid.UUID]*entry
+	m     map[K]*entry
 	limit rate.Limit
 	burst int
 }
@@ -272,11 +341,11 @@ type entry struct {
 	seen time.Time
 }
 
-func newLimiterSet(l rate.Limit, burst int) *limiterSet {
-	return &limiterSet{m: map[uuid.UUID]*entry{}, limit: l, burst: burst}
+func newLimiterSet[K comparable](l rate.Limit, burst int) *limiterSet[K] {
+	return &limiterSet[K]{m: map[K]*entry{}, limit: l, burst: burst}
 }
 
-func (s *limiterSet) allow(id uuid.UUID) bool {
+func (s *limiterSet[K]) allow(id K) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -808,6 +877,31 @@ func photoBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 		return nil, err
 	}
 	return decodePhoto(in.Photo)
+}
+
+func (s *Server) photoStats(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	st, err := s.svc.VenuePhotoStats(r.Context(), u, org, vid)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, st)
+	return nil
+}
+
+func (s *Server) forgetLearned(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	if err := s.svc.ForgetLearned(r.Context(), u, org, vid); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (s *Server) testPlace(w http.ResponseWriter, r *http.Request, u app.User) error {

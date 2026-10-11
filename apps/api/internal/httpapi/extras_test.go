@@ -339,7 +339,7 @@ func TestWebAppHosting(t *testing.T) {
 	secret := filepath.Join(filepath.Dir(dir), "outside-secret.txt")
 	os.WriteFile(secret, []byte("TOP SECRET"), 0o644)
 
-	h := webApp(dir, cspFor("https://auth.example.org/realms/x"))
+	h := webApp(dir, csp)
 	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
@@ -353,14 +353,14 @@ func TestWebAppHosting(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<title>app</title>") {
 		t.Fatalf("spa fallback: %d %q", rec.Code, rec.Body)
 	}
-	csp := rec.Header().Get("Content-Security-Policy")
-	for _, want := range []string{"script-src 'self'", "https://auth.example.org", "frame-ancestors 'none'", "object-src 'none'"} {
-		if !strings.Contains(csp, want) {
-			t.Errorf("CSP missing %q: %s", want, csp)
+	policy := rec.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"script-src 'self'", "connect-src 'self';", "frame-ancestors 'none'", "object-src 'none'"} {
+		if !strings.Contains(policy, want) {
+			t.Errorf("CSP missing %q: %s", want, policy)
 		}
 	}
-	if strings.Contains(csp, "unsafe-eval") || strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
-		t.Errorf("CSP too loose: %s", csp)
+	if strings.Contains(policy, "unsafe-eval") || strings.Contains(policy, "script-src 'self' 'unsafe-inline'") {
+		t.Errorf("CSP too loose: %s", policy)
 	}
 	// unknown API paths are JSON 404s, never the app shell
 	if rec := get("/v1/nope"); rec.Code != 404 || !strings.Contains(rec.Body.String(), "not_found") {

@@ -228,6 +228,8 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 	var gps attendance.GPSReading
 	var visualMatched, visualAvailable bool
 	var visualReason string // a more specific reason than "photo did not match"
+	var vres vision.Result  // kept to learn the room from a verified check-in
+	var codeOK bool
 	ev := map[string]any{"mode": string(c.mode), "qr": "valid"}
 	if c.mode.Checked() {
 		if in.GPS != nil && c.dist != nil {
@@ -262,7 +264,8 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 				visualReason = attendance.ReasonVisualUnavailable
 				ev["visual"] = map[string]any{"error": "unavailable"}
 			default:
-				codeOK := s.codeInPhoto(c, vr.Codes, now)
+				vres = vr
+				codeOK = s.codeInPhoto(c, vr.Codes, now)
 				visualMatched = vr.Matched && codeOK
 				if !codeOK {
 					visualReason = attendance.ReasonPhotoNoCode
@@ -328,7 +331,13 @@ func (s *Service) CheckIn(ctx context.Context, u User, in CheckInInput) (CheckIn
 		return CheckInResult{}, err
 	}
 	res.RecordID, res.Status, res.AlreadyRecorded = &id, stored, !inserted
-	return res, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return CheckInResult{}, err
+	}
+	if shouldLearn(dec.Status == attendance.StatusVerified && stored == string(attendance.StatusVerified), c.venueID, vres, codeOK) {
+		go s.learn(c.orgID, *c.venueID, sid, vres)
+	}
+	return res, nil
 }
 
 func round1(f float64) float64 { return math.Round(f*10) / 10 }

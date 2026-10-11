@@ -1,5 +1,6 @@
 // Shared helpers: roles, human wording for server reason codes, camera, location.
 import { toast } from './ui.js';
+import { t } from './i18n.js';
 
 // ---- roles (mirror internal/app rolePerms) ---------------------------------
 export const can = {
@@ -8,40 +9,40 @@ export const can = {
   review: (r) => ['owner', 'admin', 'reviewer'].includes(r),
   export: (r) => ['owner', 'admin', 'reporter'].includes(r),
 };
-export const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', organizer: 'Organizer', reviewer: 'Reviewer', reporter: 'Reporter' };
+export const ROLE_LABEL = { owner: t('Owner'), admin: t('Admin'), organizer: t('Organizer'), reviewer: t('Reviewer'), reporter: t('Reporter') };
 export const ROLE_HELP = {
-  admin: 'Manages the team, places and settings.',
-  organizer: 'Starts attendance and sees who checked in.',
-  reviewer: 'Approves or rejects flagged check-ins.',
-  reporter: 'Views and exports attendance.',
+  admin: t('Manages the team, places and settings.'),
+  organizer: t('Starts attendance and sees who checked in.'),
+  reviewer: t('Approves or rejects flagged check-ins.'),
+  reporter: t('Views and exports attendance.'),
 };
 
 // ---- modes -----------------------------------------------------------------
 export const MODES = {
-  standard: { label: 'Normal', help: 'Scan the QR code. That is all.' },
-  strict: { label: 'Strict', help: 'QR code + location + a live photo of the room.' },
+  standard: { label: t('Normal'), help: t('Scan the QR code. That is all.') },
+  strict: { label: t('Strict'), help: t('QR code + location + a live photo of the room.') },
 };
-export const modeLabel = (m) => (m === 'standard' ? 'Normal' : 'Strict');
+export const modeLabel = (m) => (m === 'standard' ? t('Normal') : t('Strict'));
 
 // ---- statuses & reasons ----------------------------------------------------
 export const STATUS = {
-  verified: { label: 'Checked in', cls: 'ok' },
-  needs_review: { label: 'Needs review', cls: 'warn' },
-  rejected: { label: 'Rejected', cls: 'bad' },
-  revoked: { label: 'Revoked', cls: 'bad' },
-  pending: { label: 'Pending', cls: '' },
+  verified: { label: t('Checked in'), cls: 'ok' },
+  needs_review: { label: t('Needs review'), cls: 'warn' },
+  rejected: { label: t('Rejected'), cls: 'bad' },
+  revoked: { label: t('Revoked'), cls: 'bad' },
+  pending: { label: t('Pending'), cls: '' },
 };
 const REASON = {
-  gps_unavailable: 'No location was shared',
-  gps_stale: 'Location reading was too old',
-  gps_accuracy_too_low: 'Location was too imprecise',
-  within_uncertainty_of_radius: 'Near the edge of the place',
-  outside_radius: 'Outside the place',
-  no_session_anchor: 'This session has no known location',
-  visual_check_required: 'Photo missing or did not match the room',
-  visual_not_configured: 'No reference photos for this place yet',
-  photo_without_current_code: 'The photo did not show the current code',
-  visual_check_unavailable: 'The photo check was unavailable at that moment',
+  gps_unavailable: t('No location was shared'),
+  gps_stale: t('Location reading was too old'),
+  gps_accuracy_too_low: t('Location was too imprecise'),
+  within_uncertainty_of_radius: t('Near the edge of the place'),
+  outside_radius: t('Outside the place'),
+  no_session_anchor: t('This session has no known location'),
+  visual_check_required: t('Photo missing or did not match the room'),
+  visual_not_configured: t('No reference photos for this place yet'),
+  photo_without_current_code: t('The photo did not show the current code'),
+  visual_check_unavailable: t('The photo check was unavailable at that moment'),
   qr_only: '',
   gps_within_radius: '',
 };
@@ -50,22 +51,22 @@ export const reasonText = (codes = []) => codes.map((c) => REASON[c]).filter(Boo
 // ---- errors ----------------------------------------------------------------
 export function fail(err) {
   console.error(err);
-  toast(err?.message || 'Something went wrong.', 'bad');
+  toast(err?.message || t('Something went wrong.'), 'bad');
 }
 
 // ---- location --------------------------------------------------------------
 /** Resolves {lat, lon, accuracy_m, fix_age_ms} or rejects with a friendly Error. */
 export function getPosition({ timeout = 15000 } = {}) {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(new Error('This device cannot share its location.'));
+    if (!navigator.geolocation) return reject(new Error(t('This device cannot share its location.')));
     navigator.geolocation.getCurrentPosition(
       (p) => resolve({
         lat: p.coords.latitude, lon: p.coords.longitude, accuracy_m: Math.round(p.coords.accuracy),
         fix_age_ms: Math.max(0, Date.now() - p.timestamp),
       }),
       (e) => reject(new Error(e.code === 1
-        ? 'Location is blocked. Allow location for this site in your browser settings, then try again.'
-        : 'Could not get your location. Move near a window and try again.')),
+        ? t('Location is blocked. Allow location for this site in your browser settings, then try again.')
+        : t('Could not get your location. Move near a window and try again.'))),
       { enableHighAccuracy: true, timeout, maximumAge: 0 },
     );
   });
@@ -78,15 +79,15 @@ export function getPosition({ timeout = 15000 } = {}) {
  * enough pixels to be read again on the server.
  */
 export async function openCamera(video, facing = 'environment', { hd = false } = {}) {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser cannot use the camera.');
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error(t('This browser cannot use the camera.'));
   let stream;
   try {
     const size = hd ? { width: { ideal: 2560 }, height: { ideal: 1440 } } : { width: { ideal: 1280 } };
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, ...size }, audio: false });
   } catch (e) {
     throw new Error(e.name === 'NotAllowedError'
-      ? 'Camera is blocked. Allow the camera for this site in your browser settings, then try again.'
-      : 'No camera found on this device.');
+      ? t('Camera is blocked. Allow the camera for this site in your browser settings, then try again.')
+      : t('No camera found on this device.'));
   }
   video.srcObject = stream;
   video.setAttribute('playsinline', '');
@@ -106,7 +107,7 @@ function scaled(src, w, h, maxSide) {
 
 /** The current camera frame as a JPEG data URL (whole frame, long side <= maxSide). */
 export function captureJPEG(video, maxSide = 1600, quality = 0.85) {
-  if (!video.videoWidth) throw new Error('The camera is not ready yet.');
+  if (!video.videoWidth) throw new Error(t('The camera is not ready yet.'));
   const { canvas, scale } = scaled(video, video.videoWidth, video.videoHeight, maxSide);
   return { dataURL: canvas.toDataURL('image/jpeg', quality), scale };
 }

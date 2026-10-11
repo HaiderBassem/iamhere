@@ -242,17 +242,34 @@ func (s *Service) ReferenceImage(ctx context.Context, u User, orgID, refID uuid.
 
 // ---- matching -------------------------------------------------------------------
 
-// sessionRefs are the references a session's photos are compared with: today's
-// photos first (closest to today's conditions), then the place's saved photos.
+// sessionRefs are the references a session's photos are compared with, most
+// telling first (the service stops at the first clear match): today's photos
+// (closest to today's conditions), then views learned from recent check-ins,
+// then the place's saved photos.
 func (s *Service) sessionRefs(ctx context.Context, orgID, sid uuid.UUID, venueID *uuid.UUID) ([]vision.Ref, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, sha256 FROM reference_photos
-		WHERE org_id=$1 AND (session_id=$2 OR ($3::uuid IS NOT NULL AND venue_id=$3))
-		ORDER BY (session_id IS NULL), created_at DESC`, orgID, sid, venueID)
+	rows, err := s.pool.Query(ctx, `SELECT id, sha256 FROM reference_photos WHERE org_id=$1 AND session_id=$2 ORDER BY created_at DESC`, orgID, sid)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return s.collectRefs(rows)
+	today, err := s.collectRefs(rows)
+	rows.Close()
+	if err != nil || venueID == nil {
+		return today, err
+	}
+	learned, err := s.learnedRefs(ctx, orgID, venueID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err = s.pool.Query(ctx, `SELECT id, sha256 FROM reference_photos WHERE org_id=$1 AND venue_id=$2 ORDER BY created_at DESC`, orgID, *venueID)
+	if err != nil {
+		return nil, err
+	}
+	saved, err := s.collectRefs(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return append(append(today, learned...), saved...), nil
 }
 
 func (s *Service) collectRefs(rows pgx.Rows) ([]vision.Ref, error) {
@@ -265,7 +282,11 @@ func (s *Service) collectRefs(rows pgx.Rows) ([]vision.Ref, error) {
 		}
 		r := vision.Ref{Load: func(ctx context.Context) ([]byte, error) {
 			var img []byte
-			return img, s.pool.QueryRow(ctx, `SELECT image FROM reference_photos WHERE id=$1`, id).Scan(&img)
+			err := s.pool.QueryRow(ctx, `SELECT image FROM reference_photos WHERE id=$1`, id).Scan(&img)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, vision.ErrRefGone // removed by an organizer since the list was made
+			}
+			return img, err
 		}}
 		copy(r.SHA256[:], sum)
 		out = append(out, r)

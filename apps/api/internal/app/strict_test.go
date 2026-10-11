@@ -6,16 +6,20 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/iamhere/api/internal/qr"
 	"github.com/iamhere/api/internal/vision"
@@ -33,10 +37,14 @@ type fakeVision struct {
 	mu     sync.Mutex
 	labels map[string]string // reference sha256 -> room label
 	cached map[string]bool   // what the service "has in its cache"
+	probes map[string]string // probe id -> room, fetchable once as a learned view
+	seq    int
+	// learned views sent back to the service (after a restart)
+	warmedFeatures int
 }
 
 func newFakeVision(t *testing.T) *fakeVision {
-	f := &fakeVision{labels: map[string]string{}, cached: map[string]bool{}}
+	f := &fakeVision{labels: map[string]string{}, cached: map[string]bool{}, probes: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	f.client = vision.New(f.srv.URL)
@@ -53,15 +61,36 @@ func (f *fakeVision) label(img []byte, room string) {
 
 func (f *fakeVision) serve(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Image, Probe string
-		Refs         []struct{ SHA256 string }
+		Image, Probe, Features string
+		ProbeID                string `json:"probe_id"`
+		Refs                   []struct{ SHA256 string }
 	}
 	json.NewDecoder(r.Body).Decode(&in)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	reply := func(status int, v any) { w.WriteHeader(status); json.NewEncoder(w).Encode(v) }
 	switch r.URL.Path {
+	case "/v1/features": // a learned view: the probe's room, as "features"
+		room, ok := f.probes[in.ProbeID]
+		if !ok {
+			reply(404, map[string]any{"error": "not_found"})
+			return
+		}
+		delete(f.probes, in.ProbeID)
+		blob := []byte("features-of:" + room + ":" + in.ProbeID)
+		h := vision.SHA256(blob)
+		f.labels[hex.EncodeToString(h[:])] = room
+		f.cached[hex.EncodeToString(h[:])] = true // like the service: ready as a reference at once
+		reply(200, map[string]string{"features": base64.StdEncoding.EncodeToString(blob)})
 	case "/v1/reference":
+		if in.Features != "" {
+			blob, _ := base64.StdEncoding.DecodeString(in.Features)
+			h := vision.SHA256(blob)
+			f.cached[hex.EncodeToString(h[:])] = true
+			f.warmedFeatures++
+			reply(200, map[string]int{"keypoints": 1500})
+			return
+		}
 		img, _ := base64.StdEncoding.DecodeString(in.Image)
 		h := vision.SHA256(img)
 		f.cached[hex.EncodeToString(h[:])] = true // like the service: cached even when criticised
@@ -95,11 +124,18 @@ func (f *fakeVision) serve(w http.ResponseWriter, r *http.Request) {
 		if c := fields["code"]; c != "" {
 			res.Codes = append(res.Codes, c)
 		}
+		score := 150 // 375% of the threshold: clearly the room, not a near-copy
+		if n, err := strconv.Atoi(fields["score"]); err == nil {
+			score = n
+		}
 		for _, ref := range in.Refs {
 			if f.labels[ref.SHA256] == fields["room"] {
-				res.Matched, res.Score = true, 150
+				res.Matched, res.Score = true, score
 			}
 		}
+		f.seq++
+		res.ProbeID = fmt.Sprintf("probe-%d", f.seq)
+		f.probes[res.ProbeID] = fields["room"]
 		reply(200, res)
 	}
 }
@@ -587,17 +623,134 @@ func TestConcurrentStrictCheckins(t *testing.T) {
 				results[i] = "checkin:" + err.Error()
 				return
 			}
-			results[i] = r.Status
+			results[i] = r.Status + " " + strings.Join(r.Reasons, ",")
 		}()
 	}
 	wg.Wait()
 	for i, r := range results {
-		if r != "verified" {
+		if !strings.HasPrefix(r, "verified ") {
 			t.Fatalf("attendee %d: %s", i, r)
 		}
 	}
 	got, _ := e.svc.GetSession(ctx, prof, o.ID, s.ID)
 	if got.Verified != n {
 		t.Fatalf("verified %d want %d", got.Verified, n)
+	}
+}
+
+// probeScore is like probe, with the score the service gives the room match.
+func probeScore(room, code string, score int) []byte {
+	return []byte(fmt.Sprintf("room=%s;code=https://attend.example.org/#/c/%s;score=%d", room, code, score))
+}
+
+func TestRoomLearning(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	prof := e.user(t, "P")
+	o := e.org(t, prof, "learn")
+	s, v := e.strictVenueSession(t, prof, o)
+	stats := func() PhotoStats {
+		t.Helper()
+		st, err := e.svc.VenuePhotoStats(ctx, prof, o.ID, v.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	waitLearned := func(n int) {
+		t.Helper()
+		for i := 0; i < 150 && stats().Learned != n; i++ {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if got := stats().Learned; got != n {
+			t.Fatalf("learned views: %d, want %d", got, n)
+		}
+	}
+	checkIn := func(name string, photo func(code string) []byte, gps *GPSInput) CheckInResult {
+		t.Helper()
+		code := e.token(t, prof, o, s)
+		r, err := e.svc.CheckIn(ctx, e.user(t, name), CheckInInput{Token: code, GPS: gps, Photo: photo(code)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	far := &GPSInput{Lat: anchor.Lat + 0.05, Lon: anchor.Lon, AccuracyM: 5}
+
+	// verified beyond doubt, and a view not seen yet: the place learns it
+	if r := checkIn("a", func(c string) []byte { return probe("room-A", c) }, near()); r.Status != "verified" {
+		t.Fatalf("%+v", r)
+	}
+	waitLearned(1)
+
+	// none of these teach anything
+	for name, tc := range map[string]struct {
+		photo  func(string) []byte
+		gps    *GPSInput
+		status string
+	}{
+		"near-copy of a known view": {func(c string) []byte { return probeScore("room-A", c, 200) }, near(), "verified"},
+		"no current code":           {func(string) []byte { return probe("room-A", "") }, near(), "needs_review"},
+		"far away":                  {func(c string) []byte { return probe("room-A", c) }, far, "rejected"},
+		"another room":              {func(c string) []byte { return probe("room-B", c) }, near(), "needs_review"},
+		"no location":               {func(c string) []byte { return probe("room-A", c) }, nil, "needs_review"},
+	} {
+		if r := checkIn(name, tc.photo, tc.gps); r.Status != tc.status {
+			t.Fatalf("%s: %+v", name, r)
+		}
+	}
+	time.Sleep(300 * time.Millisecond)
+	st := stats()
+	if st.Learned != 1 || st.Checks != 6 || st.Recognized != 5 || st.CodeRead != 5 || st.References != 1 {
+		t.Fatalf("%+v", st)
+	}
+
+	// the learned view is compared too, and is sent back to the service after a restart
+	refs, err := e.svc.sessionRefs(ctx, o.ID, s.ID, &v.ID)
+	if err != nil || len(refs) != 2 || !refs[0].Features || refs[1].Features {
+		t.Fatalf("learned views go before saved photos: %+v %v", refs, err)
+	}
+	e.vis.mu.Lock()
+	e.vis.cached = map[string]bool{}
+	e.vis.mu.Unlock()
+	if r := checkIn("after-restart", func(c string) []byte { return probeScore("room-A", c, 300) }, near()); r.Status != "verified" {
+		t.Fatalf("%+v", r)
+	}
+	if e.vis.warmedFeatures != 1 {
+		t.Fatalf("learned view re-sent %d times", e.vis.warmedFeatures)
+	}
+
+	// a place keeps its newest 24 views
+	for i := 0; i < 30; i++ {
+		e.vis.mu.Lock()
+		e.vis.probes[fmt.Sprintf("extra-%d", i)] = "room-A"
+		e.vis.mu.Unlock()
+		e.svc.learn(o.ID, v.ID, uuid.New(), vision.Result{ProbeID: fmt.Sprintf("extra-%d", i), Score: 100, Threshold: 40, Matched: true})
+	}
+	if st := stats(); st.Learned != maxLearnedPerPlace {
+		t.Fatalf("cap: %+v", st)
+	}
+
+	// only managers can make a place forget; views expire after 30 days anyway
+	org1 := e.user(t, "organizer")
+	e.svc.SetMember(ctx, prof, o.ID, org1.ID, RoleOrganizer)
+	if err := e.svc.ForgetLearned(ctx, org1, o.ID, v.ID); err != ErrForbidden {
+		t.Fatalf("organizer: %v", err)
+	}
+	e.svc.Now = func() time.Time { return e.clock().Add(31 * 24 * time.Hour) }
+	if err := e.svc.PurgeLearned(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Now = e.clock
+	if st := stats(); st.Learned != 0 {
+		t.Fatalf("expiry: %+v", st)
+	}
+	e.svc.learn(o.ID, v.ID, uuid.New(), vision.Result{ProbeID: "gone", Score: 100, Threshold: 40, Matched: true}) // unknown probe: nothing happens
+	e.vis.mu.Lock()
+	e.vis.probes["again"] = "room-A"
+	e.vis.mu.Unlock()
+	e.svc.learn(o.ID, v.ID, uuid.New(), vision.Result{ProbeID: "again", Score: 100, Threshold: 40, Matched: true})
+	if err := e.svc.ForgetLearned(ctx, prof, o.ID, v.ID); err != nil || stats().Learned != 0 {
+		t.Fatalf("forget: %v %+v", err, stats())
 	}
 }

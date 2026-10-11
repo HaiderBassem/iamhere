@@ -25,6 +25,9 @@ import (
 const MaxPhotoBytes = 1500 << 10
 
 var (
+	// ErrRefGone is what a Ref's Load returns when the reference was deleted
+	// meanwhile; the check goes on without it.
+	ErrRefGone = errors.New("vision: reference no longer exists")
 	// ErrUnavailable means the service could not be reached or failed; the
 	// caller treats the photo check as not done (never as passed).
 	ErrUnavailable = errors.New("vision: service unavailable")
@@ -40,11 +43,13 @@ type PhotoError struct {
 
 func (e *PhotoError) Error() string { return "vision: " + e.Message }
 
-// Ref is a reference photo known by its content hash. Load is only called when
-// the service does not have the reference's features cached yet.
+// Ref is a reference known by its content hash: a photo, or (Features) a
+// learned view of the room. Load is only called when the service does not have
+// it cached yet.
 type Ref struct {
-	SHA256 [32]byte
-	Load   func(context.Context) ([]byte, error)
+	SHA256   [32]byte
+	Features bool
+	Load     func(context.Context) ([]byte, error)
 }
 
 func SHA256(b []byte) [32]byte { return sha256.Sum256(b) }
@@ -65,6 +70,8 @@ type Result struct {
 	Threshold int        `json:"threshold"`
 	Refs      []RefScore `json:"refs"`
 	Model     string     `json:"model"` // matcher name and version, for the evidence trail
+	// ProbeID fetches this photo's room features for a short while (ProbeFeatures).
+	ProbeID string `json:"probe_id"`
 }
 
 // ReferenceInfo describes a reference photo accepted by the service.
@@ -187,14 +194,27 @@ func (c *Client) Verify(ctx context.Context, probe []byte, hint *[4][2]float64, 
 			if attempt == 1 {
 				return Result{}, fmt.Errorf("%w: references still missing", ErrUnavailable)
 			}
+			gone := map[string]bool{}
 			for _, h := range e.Missing {
 				r, ok := byHash[h]
 				if !ok {
 					return Result{}, fmt.Errorf("%w: asked for an unknown reference", ErrUnavailable)
 				}
-				if err := c.warm(ctx, h, r); err != nil {
+				if err := c.warm(ctx, h, r); errors.Is(err, ErrRefGone) {
+					gone[h] = true
+				} else if err != nil {
 					return Result{}, err
 				}
+			}
+			if len(gone) > 0 { // deleted since the list was made: compare with the rest
+				kept := wire[:0]
+				for _, w := range wire {
+					if !gone[w.SHA256] {
+						kept = append(kept, w)
+					}
+				}
+				wire = kept
+				req["refs"] = wire
 			}
 		default:
 			return Result{}, fmt.Errorf("%w: status %d", ErrUnavailable, status)
@@ -212,7 +232,11 @@ func (c *Client) warm(ctx context.Context, hash string, r Ref) error {
 			return nil, err
 		}
 		var info ReferenceInfo
-		status, _, err := c.post(ctx, "/v1/reference", map[string]any{"image": base64.StdEncoding.EncodeToString(img)}, &info)
+		field := "image"
+		if r.Features {
+			field = "features"
+		}
+		status, _, err := c.post(ctx, "/v1/reference", map[string]any{field: base64.StdEncoding.EncodeToString(img)}, &info)
 		if err != nil {
 			return nil, err
 		}
@@ -224,4 +248,24 @@ func (c *Client) warm(ctx context.Context, hash string, r Ref) error {
 		return nil, nil
 	})
 	return err
+}
+
+// ProbeFeatures returns the room features of a photo checked moments ago (by
+// Result.ProbeID): the learned view kept instead of the photo. The service
+// hands them out once, for about two minutes.
+func (c *Client) ProbeFeatures(ctx context.Context, probeID string) ([]byte, error) {
+	if c == nil {
+		return nil, ErrNotConfigured
+	}
+	var out struct {
+		Features string `json:"features"`
+	}
+	status, _, err := c.post(ctx, "/v1/features", map[string]string{"probe_id": probeID}, &out)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("%w: status %d", ErrUnavailable, status)
+	}
+	return base64.StdEncoding.DecodeString(out.Features)
 }

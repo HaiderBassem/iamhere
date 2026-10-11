@@ -81,6 +81,32 @@ references, none matching, three thorough comparisons) ~2 s. The service runs on
 (`IAH_VISION_WORKERS`); the API waits up to 20 s and otherwise sends the attempt to review
 (`visual_check_unavailable`), never to verified.
 
+## Learning each room
+
+The reference photos are a starting point; each place then learns from its own use. When a strict check-in is
+verified beyond doubt (the current code in the photo, GPS inside the place, and the room recognised at 150–400% of
+the threshold: clearly this room, yet not a near-copy of a view already known), the photo's **room features** are
+kept for 30 days as an extra reference for the place. Features are keypoint positions and descriptors computed with
+the screen masked out; the photo itself is never kept. At most 4 views are learned per session (a class arriving
+together would otherwise teach dozens of near-identical views) and the newest 24 per place are kept.
+
+Learned views are compared after today's photos and before the saved ones. Organizers see, per place, how many
+attendee photos were checked and recognised over 30 days and how many views were learned, and can make the place
+forget them (after rearranging the room). Nothing here can make two different places match: a view is only learned
+from a check-in whose place was already confirmed by GPS and whose photo showed the live code and this room.
+
+Measured by replaying the real photo sets in order from one saved photo per place, with exactly these rules:
+
+| | no learning | with learning |
+|---|---|---|
+| Office, hand-held sequence (TUM) | 38% | **88%** |
+| Landmarks (Phototourism) | 61% | 63% |
+
+The gain is largest where people photograph the room from many nearby positions over time, which is a classroom.
+The neural networks themselves are not retrained: they were trained by their authors on over a million photos, and
+fine-tuning them on a few rooms would make them worse (they would memorise those rooms). Learning the *rooms* is
+what improves with use.
+
 ## Running it
 
 `infra/docker-compose.yml` runs it as the `vision` service (internal network only; `IAH_VISION_URL` on the API).
@@ -107,6 +133,8 @@ are cached by image hash (LRU, `IAH_VISION_CACHE`, default 256).
   Only organizers of the organization can see them.
 - Attendee photos are never stored, by the API or the service. The attempt keeps the evidence only: the score,
   whether the room matched, whether the current code was in the photo, and the model version.
+- Learned views (see above): room features of verified check-in photos, no image, 30 days, at most 24 per place;
+  deleted with the place or by "Forget".
 
 ## Limits
 

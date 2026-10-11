@@ -14,13 +14,13 @@
 	}
 
 	# Web app: static files; unknown paths fall back to index.html (client-side routes).
-	# The app loads no third-party code. It talks to this site and to the identity provider.
+	# The app loads no third-party code and talks to nobody but this site.
 	handle {
 		# compress static files only: the API's live event stream must never be buffered
 		encode zstd gzip
 		root * /srv/web
 		header {
-			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' {$IAH_AUTH_ORIGIN}; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 			X-Frame-Options DENY
 			Permissions-Policy "camera=(self), geolocation=(self), microphone=()"
 			Cache-Control "no-cache"

@@ -1,16 +1,21 @@
 """HTTP API of the vision service. Internal only: the Go API is its sole client.
 
 POST /v1/reference {image}                    -> 200 {width,height,keypoints} | 422 {codes,message}
+POST /v1/reference {features}                 -> 200 {keypoints}   (a learned view, see features.py)
 POST /v1/verify {probe, hint?, refs:[{sha256, image?}]}
-                                              -> 200 {codes, matched, score, refs, model}
+                                              -> 200 {codes, matched, score, refs, model, probe_id}
                                                | 409 {missing:[sha256]}  (POST those to /v1/reference, or
                                                                           inline as image, then ask again)
                                                | 422 {codes, message}    (retake the photo)
+POST /v1/features {probe_id}                  -> 200 {features} | 404   (a recent probe's room features)
 GET  /healthz                                 -> 200
 
 Reference features are cached by the SHA-256 of the image bytes, so the API
 only sends a reference image the first time (or after this service restarts).
-Attendee photos are processed in memory and never written anywhere.
+Attendee photos are processed in memory and never written anywhere. For about
+two minutes after a check the probe's room features (not the photo) can be
+fetched by the API, which keeps them as a learned view of the room when the
+check-in was verified beyond doubt.
 """
 from __future__ import annotations
 
@@ -28,14 +33,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 import numpy as np
 
-from . import qr, quality
+from . import features, qr, quality
 from .matcher import Matcher
 
 log = logging.getLogger("iahvision")
 
 MAX_BODY = 32 << 20          # a probe plus up to ~16 reference images (base64)
 MAX_IMAGE = 2_000_000
-MAX_REFS = 16
+MAX_REFS = 40                # saved photos + today's photos + learned views
+PROBE_TTL = 120              # seconds a probe's features stay fetchable
 
 
 class Cache:
@@ -57,6 +63,25 @@ class Cache:
             self.d.move_to_end(k)
             while len(self.d) > self.size:
                 self.d.popitem(last=False)
+
+
+class ProbeCache:
+    """The last few probes' features, for the API to keep as learned views."""
+
+    def __init__(self, size: int = 64):
+        self.size, self.d, self.lock = size, OrderedDict(), threading.Lock()
+
+    def put(self, k, v):
+        with self.lock:
+            self.d[k] = (time.monotonic(), v)
+            self.d.move_to_end(k)
+            while len(self.d) > self.size:
+                self.d.popitem(last=False)
+
+    def take(self, k):
+        with self.lock:
+            t, v = self.d.pop(k, (0.0, None))
+        return v if time.monotonic() - t < PROBE_TTL else None
 
 
 class HTTPError(Exception):
@@ -84,6 +109,7 @@ class Service:
     def __init__(self, matcher: Matcher, cache_size: int = 256, workers: int | None = None):
         self.m = matcher
         self.cache = Cache(cache_size)
+        self.probes = ProbeCache()
         # bound concurrent heavy work; extra requests wait their turn
         self.slots = threading.BoundedSemaphore(workers or max(1, (os.cpu_count() or 2)))
 
@@ -95,6 +121,14 @@ class Service:
         return self.m.extract(img, mask)
 
     def reference(self, body: dict) -> dict:
+        if "features" in body:   # a learned view coming back from the API's database
+            try:
+                raw = base64.b64decode(body["features"], validate=True)
+                f = features.unpack(raw)
+            except (binascii.Error, ValueError, TypeError):
+                raise HTTPError(400, {"error": "bad_features", "message": "Malformed features."})
+            self.cache.put(hashlib.sha256(raw).hexdigest(), f)
+            return {"keypoints": int(f.count)}
         img, raw = decode_image(body.get("image", ""))
         with self.slots:
             feats = self.reference_features(img, raw)
@@ -130,7 +164,7 @@ class Service:
         if missing:
             raise HTTPError(409, {"error": "missing_refs", "missing": missing})
 
-        probe, _ = decode_image(body.get("probe", ""))
+        probe, probe_raw = decode_image(body.get("probe", ""))
         hint = body.get("hint")
         t0 = time.monotonic()
         with self.slots:
@@ -145,9 +179,21 @@ class Service:
             per = self.m.compare(pf, [f for _, f in feats])
         scores = [{"sha256": sha, "score": s, "matched": s >= self.m.threshold} for (sha, _), s in zip(feats, per)]
         best = max(per, default=0)
+        probe_id = hashlib.sha256(probe_raw).hexdigest()
+        self.probes.put(probe_id, pf)
         log.info("verify refs=%d best=%d codes=%d ms=%d", len(feats), best, len(codes), (time.monotonic() - t0) * 1000)
         return {"codes": [t for t, _ in codes], "matched": best >= self.m.threshold, "score": int(best),
-                "refs": scores, "threshold": self.m.threshold, "model": self.m.name}
+                "refs": scores, "threshold": self.m.threshold, "model": self.m.name, "probe_id": probe_id}
+
+    def probe_features(self, body: dict) -> dict:
+        f = self.probes.take(str(body.get("probe_id", "")))
+        if f is None:
+            raise HTTPError(404, {"error": "not_found", "message": "That check is too old."})
+        blob = features.pack(f)
+        # the API will list it as a reference from now on: have it ready, exactly
+        # as it will come back from the database (half-precision descriptors)
+        self.cache.put(hashlib.sha256(blob).hexdigest(), features.unpack(blob))
+        return {"features": base64.b64encode(blob).decode()}
 
 
 def make_handler(svc: Service):
@@ -183,6 +229,8 @@ def make_handler(svc: Service):
                     return self._send(200, svc.reference(body))
                 if self.path == "/v1/verify":
                     return self._send(200, svc.verify(body))
+                if self.path == "/v1/features":
+                    return self._send(200, svc.probe_features(body))
                 raise HTTPError(404, {"error": "not_found"})
             except HTTPError as e:
                 self._send(e.status, e.body)
