@@ -14,9 +14,12 @@ type Config struct {
 	Env          string // "development" | "production"
 	ListenAddr   string
 	DatabaseURL  string
-	OIDCIssuer   string // Keycloak realm URL
-	OIDCClientID string // expected audience / authorized party
-	DevAuth      bool   // accept "dev:<sub>:<name>" bearer tokens; never in production
+	DevAuth      bool   // also accept "dev:<sub>:<name>" bearer tokens (tests, scripts); never in production
+	PublicURL    string // the web app's address, for links in emails (e.g. https://attend.example.org)
+	SMTPURL      string // smtp://user:pass@host:587 or smtps://user:pass@host:465; empty = no email
+	MailFrom     string // From address of account emails
+	MailDir      string // development: write emails to this directory instead of sending them
+	TrustProxy   bool   // the API is only reachable through the reverse proxy (client IP from X-Forwarded-For)
 	CheckinGrace time.Duration
 	QRGraceSlots uint64
 	MaxFixAge    time.Duration
@@ -30,9 +33,12 @@ func Load() (Config, error) {
 		Env:          get("IAH_ENV", "development"),
 		ListenAddr:   get("IAH_LISTEN", ":8080"),
 		DatabaseURL:  os.Getenv("IAH_DATABASE_URL"),
-		OIDCIssuer:   os.Getenv("IAH_OIDC_ISSUER"),
-		OIDCClientID: os.Getenv("IAH_OIDC_CLIENT_ID"),
 		DevAuth:      os.Getenv("IAH_DEV_AUTH") == "1",
+		PublicURL:    strings.TrimRight(os.Getenv("IAH_PUBLIC_URL"), "/"),
+		SMTPURL:      os.Getenv("IAH_SMTP_URL"),
+		MailFrom:     os.Getenv("IAH_MAIL_FROM"),
+		MailDir:      os.Getenv("IAH_MAIL_DIR"),
+		TrustProxy:   os.Getenv("IAH_TRUST_PROXY") == "1",
 		CheckinGrace: 5 * time.Second,
 		QRGraceSlots: 2,
 		MaxFixAge:    30 * time.Second, // strict mode only: GPS fixes older than this go to review
@@ -63,16 +69,22 @@ func (c Config) Validate() error {
 	if c.DatabaseURL == "" {
 		return errors.New("IAH_DATABASE_URL is required")
 	}
+	if c.PublicURL != "" && !(strings.HasPrefix(c.PublicURL, "https://") || strings.HasPrefix(c.PublicURL, "http://")) {
+		return fmt.Errorf("IAH_PUBLIC_URL: %q must start with https://", c.PublicURL)
+	}
+	if c.SMTPURL != "" && c.MailFrom == "" {
+		return errors.New("IAH_MAIL_FROM is required with IAH_SMTP_URL (e.g. \"I Am Here <no-reply@example.org>\")")
+	}
 	if c.Env == "production" {
 		if c.DevAuth {
 			return errors.New("IAH_DEV_AUTH must not be enabled in production")
 		}
-		if c.OIDCIssuer == "" || c.OIDCClientID == "" {
-			return errors.New("IAH_OIDC_ISSUER and IAH_OIDC_CLIENT_ID are required in production")
+		if c.MailDir != "" {
+			return errors.New("IAH_MAIL_DIR is for development; use IAH_SMTP_URL in production")
 		}
-	}
-	if !c.DevAuth && c.OIDCIssuer == "" {
-		return errors.New("configure IAH_OIDC_ISSUER, or IAH_DEV_AUTH=1 for local development")
+		if !strings.HasPrefix(c.PublicURL, "https://") {
+			return errors.New("IAH_PUBLIC_URL (https://…, the address of the web app) is required in production")
+		}
 	}
 	return nil
 }

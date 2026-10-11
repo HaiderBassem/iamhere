@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/nyaruka/phonenumbers"
 
 	"github.com/iamhere/api/internal/auth"
+	"github.com/iamhere/api/internal/mail"
 	"github.com/iamhere/api/internal/vision"
 )
 
@@ -110,17 +112,25 @@ type Options struct {
 	// Vision is the photo-check service client; nil means strict mode's photo
 	// check is not available on this server.
 	Vision *vision.Client
+	// Mail sends account emails (confirm address, reset password); nil = none.
+	Mail mail.Sender
+	// PublicURL is the web app's address, used in emailed links.
+	PublicURL   string
+	ProductName string
+	Log         *slog.Logger
 }
 
 type Service struct {
-	pool *pgxpool.Pool
-	opt  Options
-	vis  *vision.Client
-	Now  func() time.Time // injectable clock; server-authoritative time
+	pool  *pgxpool.Pool
+	opt   Options
+	vis   *vision.Client
+	mail  mail.Sender
+	fails failures
+	Now   func() time.Time // injectable clock; server-authoritative time
 }
 
 func New(pool *pgxpool.Pool, opt Options) *Service {
-	return &Service{pool: pool, opt: opt, vis: opt.Vision, Now: func() time.Time { return time.Now().UTC() }}
+	return &Service{pool: pool, opt: opt, vis: opt.Vision, mail: opt.Mail, Now: func() time.Time { return time.Now().UTC() }}
 }
 
 type dbq interface {
@@ -283,6 +293,10 @@ func (s *Service) DeleteAccount(ctx context.Context, u User) error {
 		`UPDATE attendance_records SET full_name_snapshot='Deleted user', email_snapshot=NULL, phone_snapshot=NULL WHERE user_id=$1`,
 		`UPDATE users SET full_name='Deleted user', email=NULL, phone_e164=NULL,
 			idp_subject='deleted:'||id::text, deleted_at=now() WHERE id=$1`,
+		// sign-in details, devices and pending links go with it (the email can be used again)
+		`DELETE FROM accounts WHERE user_id=$1`,
+		`DELETE FROM auth_sessions WHERE user_id=$1`,
+		`DELETE FROM auth_tokens WHERE user_id=$1`,
 	}
 	for _, st := range stmts {
 		if _, err := tx.Exec(ctx, st, u.ID); err != nil {

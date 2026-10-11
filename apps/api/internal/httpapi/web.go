@@ -2,24 +2,16 @@ package httpapi
 
 import (
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// cspFor builds the Content-Security-Policy for the web app. The app loads no
-// third-party code; the only external origin it talks to is the identity
-// provider (token and discovery requests).
-func cspFor(issuer string) string {
-	connect := "'self'"
-	if u, err := url.Parse(issuer); err == nil && u.Scheme != "" && u.Host != "" {
-		connect += " " + u.Scheme + "://" + u.Host
-	}
-	return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data: blob:; media-src 'self' blob:; connect-src " + connect + "; " +
-		"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
-}
+// csp is the Content-Security-Policy of the web app: it loads no third-party
+// code and talks to nobody but this origin.
+const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; " +
+	"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 // webApp serves the single-page app from dir: real files as themselves, and
 // every other non-API path as index.html so client-side routes survive reload.

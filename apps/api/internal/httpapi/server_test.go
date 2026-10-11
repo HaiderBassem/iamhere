@@ -18,8 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/iamhere/api/internal/app"
-	"github.com/iamhere/api/internal/auth"
 	"github.com/iamhere/api/internal/db"
+	"github.com/iamhere/api/internal/mail"
 )
 
 func adminURL() string {
@@ -30,6 +30,13 @@ func adminURL() string {
 }
 
 func newServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	ts, _ := newServerMail(t)
+	return ts
+}
+
+// newServerMail also returns the directory account emails are written to.
+func newServerMail(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	ctx := context.Background()
 	admin, err := pgxpool.New(ctx, adminURL())
@@ -55,8 +62,10 @@ func newServer(t *testing.T) *httptest.Server {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	svc := app.New(pool, app.Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: time.Minute, Vision: newFakeVision(t).client})
-	h := New(svc, auth.Dev{}, slog.New(slog.NewTextHandler(io.Discard, nil)), pool.Ping, Options{})
+	mailDir := t.TempDir()
+	svc := app.New(pool, app.Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: time.Minute, Vision: newFakeVision(t).client,
+		Mail: mail.Dir{Path: mailDir, From: "I Am Here <no-reply@example.org>"}, PublicURL: "https://attend.example.org"})
+	h := New(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), pool.Ping, Options{DevAuth: true})
 	ts := httptest.NewServer(h)
 	t.Cleanup(func() {
 		ts.Close()
@@ -64,7 +73,7 @@ func newServer(t *testing.T) *httptest.Server {
 		admin.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
 		admin.Close()
 	})
-	return ts
+	return ts, mailDir
 }
 
 type client struct {
