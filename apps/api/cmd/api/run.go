@@ -113,6 +113,9 @@ func expireLoop(ctx context.Context, svc *app.Service, log *slog.Logger) {
 			if err := svc.PurgeAuth(ctx); err != nil && ctx.Err() == nil {
 				log.Error("purge expired sign-ins", "err", err.Error())
 			}
+			if err := svc.PurgeLearned(ctx); err != nil && ctx.Err() == nil {
+				log.Error("purge learned views", "err", err.Error())
+			}
 		}
 	}
 }

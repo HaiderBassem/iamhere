@@ -144,6 +144,8 @@ func New(svc *app.Service, log *slog.Logger, ready func(context.Context) error, 
 					r.Post("/venues/{vid}/references", s.h(s.addReference))
 					r.Delete("/venues/{vid}/references/{rid}", s.h(s.deleteReference))
 					r.Post("/venues/{vid}/test", s.h(s.testPlace))
+					r.Get("/venues/{vid}/photo-stats", s.h(s.photoStats))
+					r.Delete("/venues/{vid}/learned", s.h(s.forgetLearned))
 					r.Get("/references/{rid}/image", s.h(s.referenceImage))
 
 					r.Get("/sessions", s.h(s.listSessions))
@@ -873,6 +875,31 @@ func photoBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 		return nil, err
 	}
 	return decodePhoto(in.Photo)
+}
+
+func (s *Server) photoStats(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	st, err := s.svc.VenuePhotoStats(r.Context(), u, org, vid)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, 200, st)
+	return nil
+}
+
+func (s *Server) forgetLearned(w http.ResponseWriter, r *http.Request, u app.User) error {
+	org, vid, err := venueParams(r)
+	if err != nil {
+		return err
+	}
+	if err := s.svc.ForgetLearned(r.Context(), u, org, vid); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (s *Server) testPlace(w http.ResponseWriter, r *http.Request, u app.User) error {

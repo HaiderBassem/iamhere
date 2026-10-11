@@ -141,3 +141,54 @@ def test_http_protocol(server, matcher):
     assert st == 400
     st, body = post(server, "/v1/verify", {"probe": b64(b"not an image"), "refs": []})
     assert st == 422
+
+
+def test_learned_view_roundtrip(matcher):
+    from iahvision import features
+    room = wall(4)
+    a, b = view(room, 41, 0.15), view(room, 42, 0.0)
+    fa = matcher.extract(a, matcher.valid_mask(a))
+    fb = matcher.extract(b, matcher.valid_mask(b))
+    packed = features.pack(fa)
+    assert len(packed) < 300_000
+    back = features.unpack(packed)
+    assert back.count == fa.count
+    s1, s2 = matcher.compare(fb, [fa])[0], matcher.compare(fb, [back])[0]
+    assert s2 >= matcher.threshold and abs(s1 - s2) <= 0.15 * s1, (s1, s2)
+    for bad in (b"", b"IAHF1", packed[:-1], b"XXXXX" + packed[5:], packed[:9] + b"\x00\x00\x80\x7f" + packed[13:]):
+        with pytest.raises(ValueError):
+            features.unpack(bad)
+
+
+def test_learning_a_room_over_http(server, matcher):
+    from iahvision.server import HTTPError
+    room = wall(9)
+    text = "https://attend.example.org/#/c/" + "C" * 54
+    first, _ = with_screen(view(room, 91, 0.1), text, center=(640, 300), side=200)
+    later = jpeg(view(room, 93, 0.2))
+    saved = jpeg(view(wall(10), 100, 0.0))            # the only saved photo is of another room
+    sha = hashlib.sha256(saved).hexdigest()
+    assert post(server, "/v1/reference", {"image": b64(saved)})[0] == 200
+
+    st, body = post(server, "/v1/verify", {"probe": b64(jpeg(first)), "refs": [{"sha256": sha}]})
+    assert st == 200 and body["probe_id"], body
+    st, learned = post(server, "/v1/features", {"probe_id": body["probe_id"]})
+    assert st == 200, learned
+    assert post(server, "/v1/features", {"probe_id": body["probe_id"]})[0] == 404     # handed out once
+    assert post(server, "/v1/features", {"probe_id": "nope"})[0] == 404
+
+    raw = base64.b64decode(learned["features"])
+    refs = [{"sha256": sha}, {"sha256": hashlib.sha256(raw).hexdigest()}]
+    # usable at once, and the room is now recognised from the learned view
+    st, body = post(server, "/v1/verify", {"probe": b64(later), "refs": refs})
+    assert st == 200 and body["matched"] is True, body
+    assert post(server, "/v1/reference", {"features": b64(b"junk")})[0] == 400
+
+    # after a restart the API sends the stored view back
+    fresh = Service(matcher, cache_size=8, workers=1)
+    fresh.reference({"image": b64(saved)})
+    with pytest.raises(HTTPError) as e:
+        fresh.verify({"probe": b64(later), "refs": refs})
+    assert e.value.status == 409 and e.value.body["missing"] == [refs[1]["sha256"]]
+    fresh.reference({"features": learned["features"]})
+    assert fresh.verify({"probe": b64(later), "refs": refs})["matched"] is True
