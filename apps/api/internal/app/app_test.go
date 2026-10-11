@@ -50,6 +50,9 @@ func newEnv(t *testing.T) *env {
 		err = admin.Ping(ctx)
 	}
 	if err != nil {
+		if os.Getenv("CI") != "" { // a missing database must fail CI, never skip silently
+			t.Fatalf("test postgres unavailable in CI: %v", err)
+		}
 		t.Skipf("no test postgres available: %v", err)
 	}
 	name := "iah_t_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]

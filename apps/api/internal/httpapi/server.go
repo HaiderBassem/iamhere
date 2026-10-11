@@ -152,12 +152,18 @@ func cors(origins []string) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-			if origin == "" || len(allowed) == 0 {
+			if len(allowed) == 0 {
 				next.ServeHTTP(w, r)
 				return
 			}
+			// The response varies by Origin whether or not one was sent, so a
+			// shared cache can never replay one origin's headers to another.
 			w.Header().Add("Vary", "Origin")
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if !allowed[origin] {
 				if r.Method == http.MethodOptions {
 					w.WriteHeader(http.StatusForbidden)

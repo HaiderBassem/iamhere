@@ -108,7 +108,7 @@ func TestCORS(t *testing.T) {
 	if rec := do("GET", "https://evil.example"); rec.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatal("foreign origin was allowed")
 	}
-	if rec := do("GET", ""); rec.Code != 200 || rec.Header().Get("Vary") != "" {
+	if rec := do("GET", ""); rec.Code != 200 || rec.Header().Get("Vary") != "Origin" || rec.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatalf("same-origin: %d %v", rec.Code, rec.Header())
 	}
 	// disabled when no origins are configured
