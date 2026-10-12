@@ -19,7 +19,7 @@ func TestRoundTripAndManyScanners(t *testing.T) {
 	tok := Sign(secret, id, t0, rotation)
 	// the same token must verify for any number of independent callers
 	for i := 0; i < 500; i++ {
-		if err := Verify(secret, id, tok, t0.Add(2*time.Second), rotation, 2); err != nil {
+		if err := Verify(secret, id, tok, t0.Add(2*time.Second), rotation, time.Second); err != nil {
 			t.Fatalf("scanner %d: %v", i, err)
 		}
 	}
@@ -41,11 +41,11 @@ func TestRejects(t *testing.T) {
 		{"wrong session", secret, uuid.New(), tok, t0, ErrBadMAC},
 		{"garbage", secret, id, "not-a-token", t0, ErrMalformed},
 		{"empty", secret, id, "", t0, ErrMalformed},
-		{"expired beyond grace", secret, id, tok, t0.Add(40 * time.Second), ErrExpired},
+		{"replaced long ago", secret, id, tok, t0.Add(40 * time.Second), ErrExpired},
 		{"far future", secret, id, tok, t0.Add(-60 * time.Second), ErrFuture},
 	}
 	for _, c := range cases {
-		if err := Verify(c.secret, c.id, c.token, c.now, rotation, 2); !errors.Is(err, c.want) {
+		if err := Verify(c.secret, c.id, c.token, c.now, rotation, time.Second); !errors.Is(err, c.want) {
 			t.Errorf("%s: got %v want %v", c.name, err, c.want)
 		}
 	}
@@ -57,19 +57,41 @@ func TestTamperedSlotRejected(t *testing.T) {
 	fresh := Sign(secret, id, t0.Add(100*time.Second), rotation)
 	// splice the fresh slot onto the old MAC: must fail the MAC check
 	spliced := fresh[:len(fresh)-22] + old[len(old)-22:]
-	if err := Verify(secret, id, spliced, t0.Add(100*time.Second), rotation, 2); err == nil {
+	if err := Verify(secret, id, spliced, t0.Add(100*time.Second), rotation, time.Second); err == nil {
 		t.Fatal("spliced token accepted")
 	}
 }
 
-func TestGraceBoundary(t *testing.T) {
+// An old code stops working the moment the next one replaces it, apart from
+// the allowance for a request already on its way.
+func TestReplacedCodeExpires(t *testing.T) {
 	id := uuid.New()
-	tok := Sign(secret, id, t0, rotation) // slot S
-	if err := Verify(secret, id, tok, t0.Add(20*time.Second), rotation, 2); err != nil {
-		t.Fatalf("2 slots old should pass: %v", err)
+	slot := Slot(t0, rotation)
+	tok := Sign(secret, id, SlotStart(slot, rotation), rotation)
+	next := SlotStart(slot+1, rotation) // the moment the screen shows the next code
+	for _, c := range []struct {
+		name      string
+		at        time.Time
+		allowance time.Duration
+		want      error
+	}{
+		{"while on screen", next.Add(-time.Millisecond), 0, nil},
+		{"replaced, no allowance", next, 0, nil},
+		{"1 ms after, no allowance", next.Add(time.Millisecond), 0, ErrExpired},
+		{"in flight, within 1 s", next.Add(900 * time.Millisecond), time.Second, nil},
+		{"after the allowance", next.Add(1100 * time.Millisecond), time.Second, ErrExpired},
+		{"two codes later", next.Add(rotation), time.Second, ErrExpired},
+	} {
+		if err := Verify(secret, id, tok, c.at, rotation, c.allowance); !errors.Is(err, c.want) {
+			t.Errorf("%s: got %v want %v", c.name, err, c.want)
+		}
 	}
-	if err := Verify(secret, id, tok, t0.Add(30*time.Second), rotation, 2); !errors.Is(err, ErrExpired) {
-		t.Fatalf("3 slots old should expire: %v", err)
+	// the next code, a moment early (another server's clock), is fine; two ahead is not
+	if err := Verify(secret, id, Sign(secret, id, next, rotation), next.Add(-time.Second), rotation, 0); err != nil {
+		t.Errorf("next code 1 s early: %v", err)
+	}
+	if err := Verify(secret, id, Sign(secret, id, next.Add(rotation), rotation), next.Add(-time.Second), rotation, 0); !errors.Is(err, ErrFuture) {
+		t.Errorf("two codes ahead: %v", err)
 	}
 }
 
@@ -143,7 +165,7 @@ func TestClaimLifecycle(t *testing.T) {
 	if err := VerifyClaim(secret, sid, code, t0); !errors.Is(err, ErrBadMAC) {
 		t.Fatalf("code accepted as claim: %v", err)
 	}
-	if err := Verify(secret, sid, c, t0, 5*time.Second, 2); err == nil {
+	if err := Verify(secret, sid, c, t0, 5*time.Second, time.Second); err == nil {
 		t.Fatal("claim accepted as code")
 	}
 }

@@ -6,7 +6,7 @@ import { arrivedFromSignIn } from '../auth.js';
 import { takeHeldResult } from '../held.js';
 
 // #/c/<code> is a scanned code; #/c/held continues a check-in held through sign-up.
-export default async function checkin({ page, params: [token], navigate, onCleanup, setTitle, stale, state }) {
+export default async function checkin({ page, params: [token], navigate, onCleanup, setTitle, stale, state, takeEarlyScan }) {
   setTitle(t('Check in'));
   let stopCam = () => {};
   onCleanup(() => stopCam());
@@ -21,7 +21,15 @@ export default async function checkin({ page, params: [token], navigate, onClean
     scan = held.checkin;
   } else {
     working(t('Checking the code…'));
-    try { scan = await post('/v1/checkins/scan', { token }); } catch (err) { return problem(err); }
+    // usually already sent at start-up (main.js), the moment the link opened
+    const sent = takeEarlyScan?.(token);
+    if (sent) {
+      const r = await sent;
+      if (r.err) return problem(r.err);
+      scan = r.ok;
+    } else {
+      try { scan = await post('/v1/checkins/scan', { token }); } catch (err) { return problem(err); }
+    }
     if (stale()) return;
   }
   // identifies the session in a photographed code (a ticket starts like the code it came from)

@@ -33,7 +33,13 @@ async function api(method, path, body, token) {
 }
 let n = 0;
 const signup = (name) => api('POST', '/v1/auth/signup', { name, email: `${RUN}.${++n}@example.org`, password: PASSWORD });
-const code = async (org, s, tok) => (await api('GET', `/v1/orgs/${org}/sessions/${s}/qr`, undefined, tok)).token;
+// A code works only while it is on the screen: take one with at least 3 s left.
+async function code(org, s, tok) {
+  const q = await api('GET', `/v1/orgs/${org}/sessions/${s}/qr`, undefined, tok);
+  if (q.next_rotation_in_ms >= 3000) return q.token;
+  await sleep(q.next_rotation_in_ms + 100);
+  return (await api('GET', `/v1/orgs/${org}/sessions/${s}/qr`, undefined, tok)).token;
+}
 
 const sara = await signup('Sara Ahmed');
 const ws = await api('POST', '/v1/workspace', { timezone: 'Asia/Baghdad' }, sara.token);

@@ -18,7 +18,7 @@ Configuration is environment-only (`IAH_*`, see `internal/config`): `IAH_ENV` (`
 refuses to start), `IAH_LISTEN`, `IAH_DATABASE_URL`, `IAH_PUBLIC_URL` (the web app's https address, for emailed links;
 required in production), `IAH_SMTP_URL` + `IAH_MAIL_FROM` (account emails; optional), `IAH_MAIL_DIR` (development: write
 emails to a folder), `IAH_TRUST_PROXY` (client IP from the proxy's `X-Forwarded-For`, for rate limits), `IAH_DEV_AUTH`,
-`IAH_QR_GRACE_SLOTS`, `IAH_VISION_URL` (strict mode's photo check, see `docs/VISION.md`), `IAH_WEB_DIR` (serve the web app; production uses Caddy), `IAH_CORS_ORIGINS` (comma-separated exact origins; only needed when the web app is on a different
+`IAH_QR_ALLOWANCE_MS` (default 1000, 0–5000: how long a replaced code is still accepted, only for a request sent while it was on screen; 0 = the code on screen only), `IAH_VISION_URL` (strict mode's photo check, see `docs/VISION.md`), `IAH_WEB_DIR` (serve the web app; production uses Caddy), `IAH_CORS_ORIGINS` (comma-separated exact origins; only needed when the web app is on a different
 origin than the API). `api healthcheck` probes `/readyz` (used by the Compose healthcheck; the image has no shell/curl).
 `api reset-link <email>` prints a one-time password reset link (for servers without email:
 `docker compose exec api /api reset-link someone@example.org`).
@@ -47,7 +47,7 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
 | `GET /orgs/{o}/venues/{v}/photo-stats`, `DELETE .../learned` | how the photo check did at the place (30 days: photos checked, recognised, code read; learned views), and forgetting the learned views |
 | `GET/POST /orgs/{o}/sessions/{s}/references`, `DELETE .../{r}` | the session's "today's photo" (max 4; the creator or a manager, while the session is live; deleted 30 days after the session ends) |
 | `GET /orgs/{o}/references/{r}/image` | a reference photo's image (organizers only) |
-| `POST/GET /orgs/{o}/sessions` (`Idempotency-Key` header), `GET .../{s}`, `/qr`, `POST /close` | creation takes a `title` and optionally `mode` (`standard`\|`strict`; default = organization setting), `anchor` or `venue_id` |
+| `POST/GET /orgs/{o}/sessions` (`Idempotency-Key` header), `GET .../{s}`, `/qr` (the code on screen now, `next_token` and `next_rotation_in_ms`), `POST /close` | creation takes a `title` and optionally `mode` (`standard`\|`strict`; default = organization setting), `anchor` or `venue_id` |
 | `GET .../{s}/attendance` (rows carry `reasons`), `/attendance.csv`, `POST .../attendance/manual` `{user_id \| email, reason}`, `POST /orgs/{o}/attendance/{r}/review` | records, export, fallback ("Add someone" by account email; 404 `no_account`), review |
 | `GET /orgs/{o}/report?from&to&title`, `/report.csv` | attendance per person over a period (default the last 30 days, at most 366, in the organization's timezone): `attended` (verified, including added by hand), `to_review`, `rate` = attended / sessions; `titles` lists the period's session titles for the filter. Everyone who checked in at least once is listed; contacts only for roles that may see them; the CSV needs export permission |
 | `GET .../{s}/events` | SSE live counts (use fetch streaming; EventSource cannot send Authorization) |
@@ -56,9 +56,12 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
 1. **Two modes.** *Normal* (`standard`): the rotating QR is the only check; location and photo are neither requested,
    evaluated nor stored, and a valid scan is always `verified`. *Strict*: QR + GPS + a live photo of the room (below).
    The legacy value `visual` behaves like strict. The mode is chosen per session (organization setting = default).
-2. **Stateless HMAC QR** (per-session secret, **5 s** slots). Not single-use, so unlimited scanners. It proves a code was
-   recently on the organizer's screen; a forwarded screenshot works only inside the grace window: 2 slots in normal
-   mode, 1 slot in strict. With codes that short, the QR is checked **once, at scan time** (`/checkins/scan`), which
+2. **Stateless HMAC QR** (per-session secret, **5 s** slots). Not single-use, so unlimited scanners. It proves the code **is on
+   the organizer's screen now**: a code stops working the moment the next one replaces it, in both modes. The only
+   slack is `IAH_QR_ALLOWANCE_MS` (1 s) for a request already on its way at that moment; a forwarded screenshot is
+   useless by the time it arrives. The organizer's screen gets the next code in advance (`next_token`) and switches
+   exactly on time, so it never shows a code that no longer works; a check-in link sends its code before the rest of
+   the app loads. With codes that short, the QR is checked **once, at scan time** (`/checkins/scan`), which
    returns a signed ticket bound to (session, user) valid for 120 s, so people can finish the location and camera
    steps. A ticket can only be minted from a fresh scan.
    **Held scans (claims).** Someone without an account needs ~20 s to create one, longer than a code lives. Their fresh
@@ -114,9 +117,11 @@ tenancy, transactions · `internal/httpapi` routes, rate limits, SSE · `interna
 ## Known limitations and risks
 - A browser cannot prove physical presence. GPS is client-reported and spoofable; the QR can be relayed; a photo of
   the room with the live code on it can be streamed to someone elsewhere. A `verified` record means "evidence
-  consistent with presence", not proof. Strict raises the cost of cheating (5 s codes, 1-slot grace, fresh GPS, a
+  consistent with presence", not proof. Strict raises the cost of cheating (5 s codes that stop working when replaced, fresh GPS, a
   photo that must show the current code and the room); it does not make it impossible.
-- Normal mode deliberately checks nothing but the QR, so a code sent to a friend within ~10 s counts.
+- Normal mode deliberately checks nothing but the QR. A code stops working when the screen moves on (≤ 5 s, plus the
+  1 s allowance), so forwarding it is a race that is rarely won; someone in the room could still read the live code aloud
+  or stream it.
 - With 5-second codes, a first-time user who must sign in or register after scanning will usually be told the code
   changed and asked to scan again (the sign-in round trip outlasts the code). Signed-in users are not affected.
 - Strict mode without reference photos (no saved place photos and no today's photo) cannot verify anyone (everyone

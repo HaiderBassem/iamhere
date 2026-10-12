@@ -76,7 +76,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{pool: pool, now: time.Date(2030, 1, 1, 10, 0, 3, 0, time.UTC), vis: newFakeVision(t)}
-	e.svc = New(pool, Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: 30 * time.Second, // production default for strict mode
+	e.svc = New(pool, Options{QRAllowance: time.Second, CheckinGrace: 5 * time.Second, MaxFixAge: 30 * time.Second, // production default for strict mode
 		Vision: e.vis.client})
 	e.svc.Now = e.clock
 	return e
@@ -239,7 +239,25 @@ func TestQRAndSessionLifecycle(t *testing.T) {
 	_, err = e.svc.CheckIn(ctx, stu, CheckInInput{Token: qr.Sign([]byte("x"), uuid.New(), e.clock(), 10*time.Second)})
 	wantCode(t, err, "invalid_qr")
 
-	// a token 3 rotation slots old is outside the 2-slot grace
+	// a code stops working the moment the next one is on the screen
+	q, err := e.svc.SessionQR(ctx, prof, o.ID, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.advance(time.Duration(q.NextInMs)*time.Millisecond + 1500*time.Millisecond) // replaced 1.5 s ago (allowance: 1 s)
+	_, err = e.svc.CheckIn(ctx, stu, CheckInInput{Token: q.Token, GPS: near()})
+	wantCode(t, err, "qr_expired")
+	_, err = e.svc.Scan(ctx, stu, q.Token)
+	wantCode(t, err, "qr_expired")
+	_, err = e.svc.Claim(ctx, q.Token)
+	wantCode(t, err, "qr_expired")
+	// ...while a request sent just before the change (arriving within the allowance) still counts
+	q, _ = e.svc.SessionQR(ctx, prof, o.ID, s.ID)
+	e.advance(time.Duration(q.NextInMs)*time.Millisecond + 500*time.Millisecond)
+	if _, err := e.svc.Scan(ctx, stu, q.Token); err != nil {
+		t.Fatalf("in flight at the change: %v", err)
+	}
+
 	e.advance(35 * time.Second)
 	_, err = e.svc.CheckIn(ctx, stu, CheckInInput{Token: tok, GPS: near()})
 	wantCode(t, err, "qr_expired")

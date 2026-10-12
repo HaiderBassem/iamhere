@@ -63,7 +63,7 @@ func newServerMail(t *testing.T) (*httptest.Server, string) {
 		t.Fatal(err)
 	}
 	mailDir := t.TempDir()
-	svc := app.New(pool, app.Options{QRGraceSlots: 2, CheckinGrace: 5 * time.Second, MaxFixAge: time.Minute, Vision: newFakeVision(t).client,
+	svc := app.New(pool, app.Options{QRAllowance: time.Second, CheckinGrace: 5 * time.Second, MaxFixAge: time.Minute, Vision: newFakeVision(t).client,
 		Mail: mail.Dir{Path: mailDir, From: "I Am Here <no-reply@example.org>"}, PublicURL: "https://attend.example.org"})
 	h := New(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), pool.Ping, Options{DevAuth: true})
 	ts := httptest.NewServer(h)

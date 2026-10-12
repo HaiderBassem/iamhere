@@ -478,7 +478,8 @@ func TestTicketsAndRotation(t *testing.T) {
 	wantCode(t, err, "session_ended")
 }
 
-func TestStrictQRWindowIsTighterThanNormal(t *testing.T) {
+// In both modes a code stops working as soon as the next one is on the screen.
+func TestReplacedCodeFailsInEveryMode(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	prof := e.user(t, "P")
@@ -487,12 +488,11 @@ func TestStrictQRWindowIsTighterThanNormal(t *testing.T) {
 	strict := e.strictSession(t, prof, o, anchor)
 	nTok, sTok := e.token(t, prof, o, normal), e.token(t, prof, o, strict)
 
-	// 5s rotation, clock starts at :03 -> at :11 the code is exactly two rotations old
-	e.advance(8 * time.Second)
-	if _, err := e.svc.Scan(ctx, e.user(t, "n"), nTok); err != nil {
-		t.Fatalf("normal mode allows two rotations of slack: %v", err)
-	}
-	_, err := e.svc.Scan(ctx, e.user(t, "s"), sTok)
+	// 5s rotation, clock starts at :03 -> the code is replaced at :05; at :06.5 it is gone
+	e.advance(3500 * time.Millisecond)
+	_, err := e.svc.Scan(ctx, e.user(t, "n"), nTok)
+	wantCode(t, err, "qr_expired")
+	_, err = e.svc.Scan(ctx, e.user(t, "s"), sTok)
 	wantCode(t, err, "qr_expired")
 }
 
