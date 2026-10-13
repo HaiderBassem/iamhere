@@ -2,7 +2,8 @@ import { h, mount, loadScript } from '../ui.js';
 import { openCamera, watchForCode, setPendingCapture, tokenFrom } from '../lib.js';
 import { t } from '../i18n.js';
 
-export default async function scan({ page, navigate, onCleanup, setTitle }) {
+export default async function scan(ctx) {
+  const { page, navigate, onCleanup, setTitle } = ctx;
   setTitle(t('Check in'));
   const video = h('video', { autoplay: true, playsinline: true, muted: true });
   const msg = h('p', { class: 'muted center' }, t('Point your camera at the code on the screen.'));
@@ -20,7 +21,9 @@ export default async function scan({ page, navigate, onCleanup, setTitle }) {
     if (!alive) return release();
     stop = release;
   } catch (err) {
+    if (!alive) return;
     return mount(page, h('div', { class: 'stack' }, h('h1', {}, t('Scan to check in')), h('div', { class: 'banner bad' }, err.message),
+      h('button', { class: 'btn big', type: 'button', onClick: () => scan(ctx) }, t('Try again')),
       h('p', { class: 'muted' }, t('You can still check in: open your phone’s camera app, scan the code on the screen, and tap the link.'))));
   }
 

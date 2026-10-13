@@ -79,12 +79,26 @@ export function getPosition({ timeout = 15000 } = {}) {
 
 // ---- camera ----------------------------------------------------------------
 /**
+ * Technical trace of the camera starting up (no personal data: error names,
+ * frame sizes, counters). It lands in the server's access log, so a camera that
+ * fails on someone's phone can be diagnosed without their help.
+ */
+export function diag(event, data = {}) {
+  try {
+    const q = new URLSearchParams({ e: event });
+    for (const [k, v] of Object.entries(data)) q.set(k, String(v).slice(0, 140));
+    fetch('/diag?' + q, { keepalive: true, cache: 'no-store' }).catch(() => {});
+  } catch { /* never let diagnostics break the app */ }
+}
+
+/**
  * Opens the camera into a <video>. facing: 'environment' (back) or 'user'.
  * hd asks for the highest practical resolution: a far-away projected code needs
  * enough pixels to be read again on the server.
  */
 export async function openCamera(video, facing = 'environment', { hd = false } = {}) {
   if (!navigator.mediaDevices?.getUserMedia) {
+    diag('cam-unsupported', { secure: window.isSecureContext });
     throw new Error(window.isSecureContext
       ? t('This browser cannot use the camera.')
       : t('The camera only works on a secure (https) connection.'));
@@ -102,6 +116,7 @@ export async function openCamera(video, facing = 'environment', { hd = false } =
   for (const constraints of attempts) {
     try { stream = await navigator.mediaDevices.getUserMedia(constraints); break; } catch (e) {
       failure = e;
+      diag('cam-fail', { try: attempts.indexOf(constraints), name: e.name, msg: e.message });
       if (['NotAllowedError', 'PermissionDeniedError', 'SecurityError', 'NotFoundError', 'DevicesNotFoundError'].includes(e.name)) break;
     }
   }
@@ -109,8 +124,27 @@ export async function openCamera(video, facing = 'environment', { hd = false } =
   video.srcObject = stream;
   video.setAttribute('playsinline', '');
   video.muted = true;
-  await video.play().catch(() => {});
+  let playError = '';
+  await video.play().catch((e) => { playError = e.name; });
+  const track = stream.getVideoTracks()[0], set = track?.getSettings?.() || {};
+  diag('cam-ok', { label: track?.label, w: set.width, h: set.height, facing: set.facingMode, play: playError || 'ok' });
+  setTimeout(() => diag('cam-video', { vw: video.videoWidth, vh: video.videoHeight, ready: video.readyState, paused: video.paused, live: track?.readyState, shown: video.isConnected && video.getBoundingClientRect().height > 0 }), 2500);
   return () => stream.getTracks().forEach((track) => track.stop());
+}
+
+/** Where the camera permission lives in this browser: the steps differ on every platform. */
+function cameraUnblockSteps() {
+  const ua = navigator.userAgent;
+  if (/Android/.test(ua) && /Firefox/.test(ua)) {
+    return t('Tap the lock icon beside the address, then Camera, and choose Allow. If Camera is not listed there, open Android Settings, Apps, Firefox, Permissions, and allow Camera. Then tap Try again.');
+  }
+  if (/Android/.test(ua)) {
+    return t('Tap the icon beside the address, then Permissions, and allow Camera. If it is not listed there, open Android Settings, Apps, your browser, Permissions, and allow Camera. Then tap Try again.');
+  }
+  if (/iPhone|iPad|iPod/.test(ua)) {
+    return t('Tap the page menu in the address bar, then Website Settings, and set Camera to Allow. Then tap Try again.');
+  }
+  return t('Click the lock or camera icon in the address bar, allow the camera for this site, then press Try again. Also check that your system allows this browser to use the camera.');
 }
 
 /** What went wrong opening the camera, in words a person can act on (the error name helps support). */
@@ -118,7 +152,7 @@ function cameraProblem(e) {
   const name = e?.name || 'Error';
   switch (name) {
     case 'NotAllowedError': case 'PermissionDeniedError': case 'SecurityError':
-      return `${t('Camera is blocked. Allow the camera for this site in your browser settings, then try again.')} [${name}]`;
+      return `${t('Camera is blocked.')} ${cameraUnblockSteps()} [${name}]`;
     case 'NotFoundError': case 'DevicesNotFoundError':
       return `${t('No camera found on this device.')} [${name}]`;
     case 'NotReadableError': case 'TrackStartError': case 'AbortError':
@@ -160,18 +194,37 @@ export async function fileToJPEG(file, maxSide = 1600, quality = 0.85) {
  */
 export function watchForCode(video, { maxSide = 1600, accept = () => true } = {}) {
   let alive = true, timer, settle;
+  const started = Date.now(), seen = { ticks: 0, frames: 0, hits: 0, refused: 0, err: '' };
+  let reported = 0;
   const work = document.createElement('canvas');
   const ctx = work.getContext('2d', { willReadFrequently: true });
   const promise = new Promise((resolve) => {
     settle = resolve;
     const tick = () => {
       if (!alive) return;
+      seen.ticks++;
+      // once at ~4 s and once at ~12 s: is the reader getting real pictures?
+      if (reported < 2 && Date.now() - started > (reported ? 12000 : 4000)) {
+        reported++;
+        let light = -1, spread = -1;
+        try {
+          const px = ctx.getImageData(0, 0, Math.max(1, work.width), Math.max(1, work.height)).data;
+          let sum = 0, lo = 255, hi = 0, n = 0;
+          for (let i = 0; i < px.length; i += 4 * 97) { const v = px[i]; sum += v; if (v < lo) lo = v; if (v > hi) hi = v; n++; }
+          light = Math.round(sum / Math.max(1, n)); spread = hi - lo;
+        } catch (e) { seen.err = e.name; }
+        diag('scan', { ...seen, jsqr: !!window.jsQR, vw: video.videoWidth, ready: video.readyState, light, spread });
+      }
       if (video.readyState >= 2 && video.videoWidth && window.jsQR) {
+        seen.frames++;
         const s = Math.min(1, 960 / video.videoWidth);
         work.width = Math.round(video.videoWidth * s); work.height = Math.round(video.videoHeight * s);
         ctx.drawImage(video, 0, 0, work.width, work.height);
         const code = window.jsQR(ctx.getImageData(0, 0, work.width, work.height).data, work.width, work.height, { inversionAttempts: 'dontInvert' });
+        if (code) seen.hits++;
+        if (code && !accept(code.data)) seen.refused++;
         if (code && accept(code.data)) {
+          diag('scan-ok', { ms: Date.now() - started, frames: seen.frames });
           const shot = captureJPEG(video, maxSide);
           const k = shot.scale / s;                 // detection canvas -> photo pixels
           const L = code.location;
