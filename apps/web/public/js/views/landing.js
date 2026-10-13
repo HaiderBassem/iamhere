@@ -9,7 +9,7 @@ export default async function landing({ page, setTitle, onCleanup }) {
   setTitle('');
   const list = (cls, items) => h('ul', { class: cls }, items);
   const step = (n, ic, title, text) => h('li', { class: 'step-card' },
-    h('span', { class: 'step-num' }, t('Step {n}', { n })), h('span', { class: 'row', style: 'gap:10px' }, icon(ic), h('h3', {}, title)), h('p', { class: 'muted' }, text));
+    h('span', { class: 'step-num' }, h('span', { class: 'sr-only' }, t('Step {n}', { n })), h('span', { 'aria-hidden': 'true' }, String(n).padStart(2, '0'))), h('span', { class: 'row', style: 'gap:10px' }, icon(ic), h('h3', {}, title)), h('p', { class: 'muted' }, text));
   const who = (ic, title, text) => h('li', {}, icon(ic), h('b', {}, title), h('span', { class: 'small muted' }, text));
   const problem = (text) => h('li', {}, icon('x'), h('span', {}, text));
   const mode = (title, badge, text, points) => h('div', { class: 'mode-card' },
@@ -33,7 +33,7 @@ export default async function landing({ page, setTitle, onCleanup }) {
     h('section', { class: 'land-hero' },
       h('div', { class: 'hero-text' },
         h('span', { class: 'eyebrow' }, t('Attendance for classes, teams and events')),
-        h('h1', {}, t('One title. One QR code.'), ' ', h('em', {}, t('Everyone checked in.'))),
+        h('h1', {}, t('One title. One QR code.'), ' ', h('em', { class: 'mark' }, t('Everyone checked in.'))),
         h('p', { class: 'lead' }, t('Type a title and press Start. People scan the code on your screen with their phone, and the list fills itself in. No app, no paper, no queue.')),
         h('div', { class: 'row wrap' },
           h('a', { class: 'btn big-inline', href: '#/signup' }, t('Start free'), icon('arrow')),
@@ -78,8 +78,8 @@ export default async function landing({ page, setTitle, onCleanup }) {
         mode(t('Strict'), t('Exams and paid events'), t('For when it really matters who was in the room.'),
           [t('Location checked against the place'), t('A photo of the screen proves the code was seen live'), t('Recognises the room, and learns it better with every session'), t('Anything doubtful goes to you to decide')]))),
 
-    h('section', { class: 'promise' },
-      h('h2', {}, t('One title. One QR code.'), ' ', h('span', { class: 'here' }, t('Everyone checked in.'))),
+    h('section', { class: 'promise on-ink pattern' },
+      h('h2', {}, t('One title. One QR code.'), ' ', h('span', { class: 'mark' }, t('Everyone checked in.'))),
       h('p', {}, t('One account for every attendee, in every organization. They sign up once, in 20 seconds, during their first check-in, and never again.')),
       h('a', { class: 'btn light big-inline', href: '#/signup' }, t('Start your first session'), icon('arrow'))),
 

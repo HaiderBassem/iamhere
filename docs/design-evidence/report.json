@@ -1,12 +1,12 @@
 {
-  "contract": "docs/DESIGN.md section 1 (design contract): civic-utility tone, the stamped pass as the memorable detail, phone (390x844) and desktop (1440x900) targets, AA contrast in both themes, 44 px primary targets, every data view with loading/empty/error/partial/success states.",
+  "contract": "docs/DESIGN.md section 1 (design contract): the Skillture identity (cyan on ink), the stamped pass as the memorable detail, phone (390x844) and desktop (1440x900) targets, AA contrast in both themes, 48 px primary targets, every data view with loading/empty/error/partial/success states.",
   "targetViewports": [
     "390x844",
     "1440x900"
   ],
   "accessibility": {
     "status": "pass",
-    "evidence": "Measured on 26 renders (light and dark): every text element meets WCAG AA contrast against its real background, every form control has an accessible name, every target is at least 24 px (primary actions 44-54 px), no script errors. Keyboard: 8 tab stops on home all show a 3 px outline. Reduced motion: the stamp and other animations are off."
+    "evidence": "Measured on 26 renders (light and dark): every text element meets WCAG AA contrast against its real background, every form control has an accessible name, every target is at least 24 px (primary actions 48-56 px), no script errors. Keyboard: 8 tab stops on home all show a 3 px outline. Reduced motion: the stamp and other animations are off."
   },
   "responsive": {
     "status": "pass",

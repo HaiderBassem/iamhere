@@ -71,5 +71,5 @@ report without asking. **One title. One QR code. Everyone checked in.**
 ## Open questions for the founders
 
 1. Is Iraq-first the launch, with English as the first interface language, or should Arabic ship first?
-2. Is the brand an independent company, or part of a larger group (Skillture)? If so, should it show "by Skillture"?
+2. The interface now wears the Skillture identity (colors, type, line motifs; see [`DESIGN.md`](DESIGN.md)) with its own mark and name. Still open: should it say "by Skillture" anywhere, and may it use the Skillture logo?
 3. Which institutions are the first pilots? Their colours or logos may appear in co-branded reports later.

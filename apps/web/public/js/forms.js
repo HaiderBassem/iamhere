@@ -6,7 +6,7 @@ import { t } from './i18n.js';
 
 /** A centered card page for signing in and friends, like most products use. */
 export function authLayout({ title, subtitle, body, footer }) {
-  return h('div', { class: 'auth' },
+  return h('div', { class: 'auth pattern' },
     h('a', { class: 'auth-brand', href: '#/' }, h('img', { src: brand.logo, alt: '', width: 40, height: 40 }), h('span', {}, brand.name)),
     h('div', { class: 'auth-card' },
       h('div', { class: 'stack-sm' }, h('h1', {}, title), subtitle && h('p', { class: 'muted' }, subtitle)),

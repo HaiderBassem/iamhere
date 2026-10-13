@@ -4,8 +4,8 @@
   "description": "One title. One QR code. Everyone checked in.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F5F3EE",
-  "theme_color": "#0E6B73",
+  "background_color": "#F3FAFA",
+  "theme_color": "#050909",
   "icons": [
     {
       "src": "/assets/logo.svg",

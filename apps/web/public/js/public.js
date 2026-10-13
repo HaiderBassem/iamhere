@@ -10,6 +10,7 @@ export const landNav = () => h('header', { class: 'land-nav' },
   h('a', { class: 'btn small', href: '#/signup' }, t('Start free')));
 
 export const landFoot = () => h('footer', { class: 'land-foot' },
+  h('span', { class: 'frieze', 'aria-hidden': 'true' }),
   h('a', { class: 'brand', href: '#/' }, h('img', { src: brand.logo, alt: '', width: 28, height: 28 }), h('span', {}, brand.name)),
   h('span', { class: 'small' }, t(brand.promise)),
   h('span', { class: 'grow' }),

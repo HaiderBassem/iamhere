@@ -7,7 +7,7 @@ Plain HTML, CSS and ES modules. **No framework, no build step, no runtime depend
 ```
 public/            everything the browser loads (this is the only folder that is served)
   theme.css        colors, fonts, radii (tokens; same values in design-tokens.json)  ← re-skin here
-  fonts/           IBM Plex Sans (OFL), self-hosted
+  fonts/           Readex Pro and Baloo Bhaijaan 2 (OFL), self-hosted, Latin and Arabic
   design-preview.html  every token and component, rendered
   brand.js         name, tagline, logo path  ← and here
   assets/logo.svg  the logo  ← and here
@@ -27,6 +27,7 @@ Camera and location need HTTPS, except on `localhost`. Production: Caddy serves 
 ## Re-skin (for example to a new brand)
 1. `public/theme.css`: change the variables under `:root` (and the dark-mode block). Nothing else holds a color.
 2. `public/brand.js`: product name and tagline. `public/assets/logo.svg`: the logo (also the favicon and app icon).
+   `public/assets/pattern.svg` and `frieze.svg`: the line motifs (masks; their color comes from CSS).
 3. `public/manifest.webmanifest` and the `theme-color` meta tag in `public/index.html`: the brand color on phones.
 
 ## Languages

@@ -1,100 +1,120 @@
 {
-  "$description": "I Am Here design tokens. Generated from theme.css (the source of truth); rationale in docs/DESIGN.md.",
+  "$description": "I Am Here design tokens (the Skillture identity). Generated from theme.css (the source of truth); rationale in docs/DESIGN.md.",
   "color": {
     "brand": {
-      "light": "#0E6B73",
-      "dark": "#5CC6C9"
+      "light": "#007A7A",
+      "dark": "#00CCCC"
     },
     "brand-strong": {
-      "light": "#0A545B",
-      "dark": "#86D7D9"
+      "light": "#005F5F",
+      "dark": "#26E0E0"
     },
     "brand-ink": {
       "light": "#FFFFFF",
-      "dark": "#062226"
+      "dark": "#050909"
     },
     "brand-soft": {
-      "light": "#E1EFEF",
-      "dark": "#123236"
+      "light": "#EAF6F6",
+      "dark": "#092B2B"
     },
     "accent": {
-      "light": "#F2A516",
-      "dark": "#F5B83D"
+      "light": "#00CCCC",
+      "dark": "#00CCCC"
     },
     "accent-ink": {
-      "light": "#10222A",
-      "dark": "#10222A"
+      "light": "#050909",
+      "dark": "#050909"
+    },
+    "ink": {
+      "light": "#050909",
+      "dark": "#111B1B"
+    },
+    "on-ink": {
+      "light": "#F1F8F8",
+      "dark": "#F1F8F8"
+    },
+    "on-ink-muted": {
+      "light": "#B0C4C4",
+      "dark": "#A9C0C0"
+    },
+    "ink-line": {
+      "light": "#2C4343",
+      "dark": "#2C4343"
     },
     "bg": {
-      "light": "#F5F3EE",
-      "dark": "#0C1517"
+      "light": "#F3FAFA",
+      "dark": "#050909"
     },
     "surface": {
       "light": "#FFFFFF",
-      "dark": "#132124"
+      "dark": "#0A1111"
     },
     "surface-2": {
-      "light": "#EDEAE2",
-      "dark": "#1A2C30"
+      "light": "#E6F4F4",
+      "dark": "#141F1F"
     },
     "line": {
-      "light": "#DFDACE",
-      "dark": "#26393F"
+      "light": "#CFE3E3",
+      "dark": "#233636"
+    },
+    "line-strong": {
+      "light": "#6F9A9A",
+      "dark": "#4A6B6B"
     },
     "text": {
-      "light": "#10222A",
-      "dark": "#E7EEEE"
+      "light": "#050909",
+      "dark": "#F1F8F8"
     },
     "muted": {
-      "light": "#4E5E63",
-      "dark": "#9FB2B4"
+      "light": "#435B5B",
+      "dark": "#88A2A2"
     },
     "ok": {
-      "light": "#1C7A47",
-      "dark": "#4CC982"
+      "light": "#0B7A4B",
+      "dark": "#2FD58A"
     },
     "ok-soft": {
-      "light": "#E3F2E8",
-      "dark": "#123425"
+      "light": "#E7F2ED",
+      "dark": "#0F2C22"
     },
     "warn": {
-      "light": "#9A5B00",
-      "dark": "#F0B657"
+      "light": "#8A5300",
+      "dark": "#FBBF24"
     },
     "warn-soft": {
-      "light": "#FBF0D9",
-      "dark": "#3A2C10"
+      "light": "#F6EFE4",
+      "dark": "#2C2914"
     },
     "bad": {
-      "light": "#B5332A",
-      "dark": "#FF8A7D"
+      "light": "#B42318",
+      "dark": "#FF4040"
     },
     "bad-soft": {
-      "light": "#FBE7E4",
-      "dark": "#3D1C1A"
+      "light": "#F9EDED",
+      "dark": "#311919"
     },
     "on-status": {
       "light": "#FFFFFF",
-      "dark": "#0C1517"
+      "dark": "#050909"
     }
   },
   "radius": {
-    "md": "14px",
-    "sm": "10px",
-    "xs": "6px"
+    "md": "16px",
+    "sm": "12px",
+    "xs": "8px"
   },
   "shadow": {
     "resting": {
-      "light": "0 1px 2px rgb(16 34 42 / .06)",
+      "light": "0 1px 2px rgb(5 9 9 / .05)",
       "dark": "0 1px 2px rgb(0 0 0 / .4)"
     },
     "raised": {
-      "light": "0 12px 32px rgb(16 34 42 / .14), 0 2px 6px rgb(16 34 42 / .08)",
-      "dark": "0 12px 32px rgb(0 0 0 / .5), 0 2px 6px rgb(0 0 0 / .35)"
+      "light": "0 18px 40px -18px rgb(5 9 9 / .45), 0 2px 6px rgb(5 9 9 / .06)",
+      "dark": "0 18px 40px -18px rgb(0 0 0 / .8), 0 2px 6px rgb(0 0 0 / .35)"
     }
   },
   "font": {
-    "family": "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", Roboto, \"Noto Sans\", \"Noto Naskh Arabic\", Arial, sans-serif",
+    "family": "\"Readex Pro\", ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", Roboto, \"Noto Sans\", \"Noto Naskh Arabic\", Arial, sans-serif",
     "mono": "ui-monospace, \"SF Mono\", \"Cascadia Mono\", Menlo, monospace",
     "weights": [
       400,
@@ -106,16 +126,17 @@
       "body": "16px",
       "small": ".875rem",
       "eyebrow": ".75rem",
-      "h3": "1rem",
-      "h2": "1.2rem",
-      "h1": "clamp(1.55rem, 1.25rem + 1vw, 2rem)",
-      "display": "clamp(2.4rem, 1.3rem + 4.2vw, 4.1rem)"
+      "h3": "1.15rem",
+      "h2": "1.4rem",
+      "h1": "clamp(1.85rem, 1.5rem + 1.2vw, 2.4rem)",
+      "display": "clamp(2.7rem, 1.5rem + 4.6vw, 4.6rem)"
     },
     "lineHeight": {
       "body": 1.55,
-      "heading": 1.2,
-      "display": 1.02
-    }
+      "heading": 1.12,
+      "display": 1.04
+    },
+    "display": "\"Baloo Bhaijaan 2\", \"Readex Pro\", ui-sans-serif, system-ui, sans-serif"
   },
   "space": {
     "1": "4px",
@@ -126,9 +147,9 @@
     "6": "28px"
   },
   "size": {
-    "touchTarget": "44px",
-    "input": "48px",
-    "primaryAction": "54px",
+    "touchTarget": "48px",
+    "input": "50px",
+    "primaryAction": "56px",
     "contentMax": "760px",
     "landingMax": "1120px"
   },
@@ -141,5 +162,10 @@
     "enter": ".2s ease-out",
     "stamp": ".35s cubic-bezier(.2, 1.6, .4, 1)",
     "reducedMotion": "all animation off"
+  },
+  "motif": {
+    "pattern": "/assets/pattern.svg (160px tile, CSS mask)",
+    "frieze": "/assets/frieze.svg (64x32, CSS mask, repeat-x)",
+    "mark": "highlighter under one phrase; a solid cyan label on dark surfaces"
   }
 }

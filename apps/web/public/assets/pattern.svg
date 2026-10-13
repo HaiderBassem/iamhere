@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" fill="none" stroke="#000" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- A pin with a check, on a maze path that joins the next tile. Alpha mask: the color comes from CSS (.pattern). -->
+  <path d="M80 22c-13.300 0-24 10.500-24 23.600C56 63.300 80 81 80 81s24-17.700 24-35.400C104 32.500 93.300 22 80 22Z"/>
+  <path d="m69 46 7.600 7.600L91 38.800"/>
+  <path d="M80 96v52"/>
+  <path d="M0 112h34V92h22"/>
+  <path d="M160 112h-34V92h-22"/>
+  <path d="M0 144h20v-12"/>
+  <path d="M160 144h-20v-12"/>
+</svg>

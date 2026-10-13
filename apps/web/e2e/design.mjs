@@ -246,11 +246,11 @@ await noCamera.close();
 
 const bad = results.filter((r) => r.overflow > 0 || r.lowContrast.length || r.unlabeled.length || r.smallTargets.length || r.errors.length);
 const report = {
-  contract: 'docs/DESIGN.md section 1 (design contract): civic-utility tone, the stamped pass as the memorable detail, phone (390x844) and desktop (1440x900) targets, AA contrast in both themes, 44 px primary targets, every data view with loading/empty/error/partial/success states.',
+  contract: 'docs/DESIGN.md section 1 (design contract): the Skillture identity (cyan on ink), the stamped pass as the memorable detail, phone (390x844) and desktop (1440x900) targets, AA contrast in both themes, 48 px primary targets, every data view with loading/empty/error/partial/success states.',
   targetViewports: Object.keys(VIEWPORTS),
   accessibility: bad.length || !focusOK || !motionOK
     ? { status: 'fail', evidence: `${bad.length} screen(s) with findings; focus ${focusOK}; reduced motion ${motionOK}` }
-    : { status: 'pass', evidence: `Measured on ${results.length} renders (light and dark): every text element meets WCAG AA contrast against its real background, every form control has an accessible name, every target is at least 24 px (primary actions 44-54 px), no script errors. Keyboard: ${focus.length} tab stops on home all show a 3 px outline. Reduced motion: the stamp and other animations are off.` },
+    : { status: 'pass', evidence: `Measured on ${results.length} renders (light and dark): every text element meets WCAG AA contrast against its real background, every form control has an accessible name, every target is at least 24 px (primary actions 48-56 px), no script errors. Keyboard: ${focus.length} tab stops on home all show a 3 px outline. Reduced motion: the stamp and other animations are off.` },
   responsive: bad.some((r) => r.overflow > 0)
     ? { status: 'fail', evidence: 'horizontal overflow found' }
     : { status: 'pass', evidence: `No horizontal scrolling on any of ${results.length} renders at 390x844 and 1440x900; phone uses the bottom tab bar and stacked composer, desktop the top navigation, two-column live session and five-column landing grids. Long and right-to-left names (Kurdish) wrap without overlap.` },
