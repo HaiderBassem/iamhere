@@ -1,7 +1,7 @@
 {
   "name": "I Am Here",
   "short_name": "I Am Here",
-  "description": "One title. One QR code. Everyone checked in.",
+  "description": "One Identity. Every Attendance. Everywhere.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F3FAFA",

@@ -33,7 +33,7 @@ export default async function landing({ page, setTitle, onCleanup }) {
     h('section', { class: 'land-hero' },
       h('div', { class: 'hero-text' },
         h('span', { class: 'eyebrow' }, t('Attendance for classes, teams and events')),
-        h('h1', {}, t('One title. One QR code.'), ' ', h('em', { class: 'mark' }, t('Everyone checked in.'))),
+        h('h1', {}, t('One Identity. Every Attendance.'), ' ', h('em', { class: 'mark' }, t('Everywhere.'))),
         h('p', { class: 'lead' }, t('Type a title and press Start. People scan the code on your screen with their phone, and the list fills itself in. No app, no paper, no queue.')),
         h('div', { class: 'row wrap' },
           h('a', { class: 'btn big-inline', href: '#/signup' }, t('Start free'), icon('arrow')),
@@ -79,7 +79,7 @@ export default async function landing({ page, setTitle, onCleanup }) {
           [t('Location checked against the place'), t('A photo of the screen proves the code was seen live'), t('Recognises the room, and learns it better with every session'), t('Anything doubtful goes to you to decide')]))),
 
     h('section', { class: 'promise on-ink pattern' },
-      h('h2', {}, t('One title. One QR code.'), ' ', h('span', { class: 'mark' }, t('Everyone checked in.'))),
+      h('h2', {}, t('One Identity. Every Attendance.'), ' ', h('span', { class: 'mark' }, t('Everywhere.'))),
       h('p', {}, t('One account for every attendee, in every organization. They sign up once, in 20 seconds, during their first check-in, and never again.')),
       h('a', { class: 'btn light big-inline', href: '#/signup' }, t('Start your first session'), icon('arrow'))),
 

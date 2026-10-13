@@ -443,7 +443,7 @@ try {
   v.page.errors = [];
   v.page.on('pageerror', (e) => v.page.errors.push(e.message));
   await v.page.goto(BASE + '/');
-  await v.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
+  await v.page.getByRole('heading', { level: 1, name: /One Identity\. Every Attendance\./ }).waitFor();
   check(await v.page.getByRole('link', { name: 'Start free' }).first().isVisible(), 'a visitor sees the start page, with sign up and sign in');
   await v.page.locator('.demo-qr svg').waitFor();
   check(true, 'the landing page shows a live, rotating QR demo');
@@ -489,7 +489,7 @@ try {
   // sign out, wrong password, right password
   await v.page.goto(BASE + '/#/me');
   await v.page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await v.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
+  await v.page.getByRole('heading', { level: 1, name: /One Identity\. Every Attendance\./ }).waitFor();
   await v.page.goto(BASE + '/#/signin');
   await v.page.getByRole('heading', { name: 'Welcome back' }).waitFor();
   await v.page.getByLabel('Email').fill(v.email);
@@ -505,7 +505,7 @@ try {
   // forgot password -> emailed link -> new password -> signed in; the old one stops working
   await v.page.goto(BASE + '/#/me');
   await v.page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await v.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
+  await v.page.getByRole('heading', { level: 1, name: /One Identity\. Every Attendance\./ }).waitFor();
   await v.page.goto(BASE + '/#/signin');
   await v.page.getByRole('link', { name: 'Forgot password?' }).click();
   await v.page.getByRole('heading', { name: 'Reset your password' }).waitFor();
@@ -523,7 +523,7 @@ try {
   await prof.page.getByRole('button', { name: 'Your account' }).click();
   await shot(prof, '63-account-menu');
   await prof.page.getByRole('menuitem', { name: 'Sign out' }).click();
-  await prof.page.getByRole('heading', { level: 1, name: /One title\. One QR code\./ }).waitFor();
+  await prof.page.getByRole('heading', { level: 1, name: /One Identity\. Every Attendance\./ }).waitFor();
   await prof.page.goto(strictSession);
   await prof.page.getByRole('heading', { name: 'Welcome back' }).waitFor();
   await prof.page.getByLabel('Email').fill(prof.email);

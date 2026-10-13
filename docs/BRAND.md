@@ -59,7 +59,7 @@ still notices who is not supposed to be there.
 Before: a sheet goes around the room for ten minutes, and a third of the signatures are friends' handwriting.
 Then: the lecturer types the class name, and a code appears on the screen. Three seconds later the first names
 arrive, and fifty arrive in a minute. Nobody outside the room can get on the list, and the registrar gets the
-report without asking. **One title. One QR code. Everyone checked in.**
+report without asking. **One Identity. Every Attendance. Everywhere.**
 
 ## Naming and copy rules
 

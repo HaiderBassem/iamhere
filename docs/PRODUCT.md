@@ -1,6 +1,6 @@
 # I Am Here — Product brief
 
-*One title. One QR code. Everyone checked in.*
+*One Identity. Every Attendance. Everywhere.*
 
 Written with the ECC `product-lens` method (diagnostic, journey audit, prioritisation) from the business concept.
 Every recommendation ends in something built, or in a numbered item on the roadmap below.
