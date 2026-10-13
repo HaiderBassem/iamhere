@@ -84,21 +84,48 @@ export function getPosition({ timeout = 15000 } = {}) {
  * enough pixels to be read again on the server.
  */
 export async function openCamera(video, facing = 'environment', { hd = false } = {}) {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error(t('This browser cannot use the camera.'));
-  let stream;
-  try {
-    const size = hd ? { width: { ideal: 2560 }, height: { ideal: 1440 } } : { width: { ideal: 1280 } };
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, ...size }, audio: false });
-  } catch (e) {
-    throw new Error(e.name === 'NotAllowedError'
-      ? t('Camera is blocked. Allow the camera for this site in your browser settings, then try again.')
-      : t('No camera found on this device.'));
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error(window.isSecureContext
+      ? t('This browser cannot use the camera.')
+      : t('The camera only works on a secure (https) connection.'));
   }
+  const size = hd ? { width: { ideal: 2560 }, height: { ideal: 1440 } } : { width: { ideal: 1280 } };
+  // Some cameras and drivers refuse a high-resolution request (Firefox on Windows
+  // and many webcams do): fall back to simpler requests before giving up. A refusal
+  // by the person, or no camera at all, will not change, so those stop at once.
+  const attempts = [
+    { video: { facingMode: { ideal: facing }, ...size }, audio: false },
+    { video: { facingMode: { ideal: facing } }, audio: false },
+    { video: true, audio: false },
+  ];
+  let stream, failure;
+  for (const constraints of attempts) {
+    try { stream = await navigator.mediaDevices.getUserMedia(constraints); break; } catch (e) {
+      failure = e;
+      if (['NotAllowedError', 'PermissionDeniedError', 'SecurityError', 'NotFoundError', 'DevicesNotFoundError'].includes(e.name)) break;
+    }
+  }
+  if (!stream) throw new Error(cameraProblem(failure));
   video.srcObject = stream;
   video.setAttribute('playsinline', '');
   video.muted = true;
   await video.play().catch(() => {});
-  return () => stream.getTracks().forEach((t) => t.stop());
+  return () => stream.getTracks().forEach((track) => track.stop());
+}
+
+/** What went wrong opening the camera, in words a person can act on (the error name helps support). */
+function cameraProblem(e) {
+  const name = e?.name || 'Error';
+  switch (name) {
+    case 'NotAllowedError': case 'PermissionDeniedError': case 'SecurityError':
+      return `${t('Camera is blocked. Allow the camera for this site in your browser settings, then try again.')} [${name}]`;
+    case 'NotFoundError': case 'DevicesNotFoundError':
+      return `${t('No camera found on this device.')} [${name}]`;
+    case 'NotReadableError': case 'TrackStartError': case 'AbortError':
+      return `${t('The camera is busy or not responding. Close other apps or tabs that use it, then try again.')} [${name}]`;
+    default:
+      return `${t('The camera could not be started.')} [${name}]`;
+  }
 }
 
 /** Draws an image source scaled so its long side is at most maxSide; returns the canvas. */
